@@ -49,6 +49,9 @@ interface InvoiceData {
     id: string;
     fieldReference: string;
     sourceQuote: string;
+    startOffset?: number | null;
+    endOffset?: number | null;
+    status?: string | null;
     verified: boolean;
   }>;
   statusHistory: Array<{
@@ -574,9 +577,16 @@ export default function InvoiceDetailPage({
                     >
                       <div className="flex items-center justify-between text-[10px] text-cyan-400">
                         <span>{ev.fieldReference}</span>
-                        <span className="text-emerald-400 font-bold">&#10003; VERIFIED IN SOURCE</span>
+                        <span className={ev.verified ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
+                          {ev.verified ? "✓ VERIFIED IN SOURCE" : "⚠ UNVERIFIED"}
+                        </span>
                       </div>
                       <div className="text-slate-200">&ldquo;{ev.sourceQuote}&rdquo;</div>
+                      {ev.startOffset !== null && ev.startOffset !== undefined && (
+                        <div className="text-[9px] text-slate-500 font-mono">
+                          Source range: [{ev.startOffset}–{ev.endOffset}]
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

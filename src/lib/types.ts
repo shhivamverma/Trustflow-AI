@@ -4,6 +4,8 @@ import { z } from 'zod';
 /* Line Item Schema & Types                                                   */
 /* -------------------------------------------------------------------------- */
 
+export type EvidenceStatus = 'VERIFIED' | 'AMBIGUOUS' | 'NOT FOUND' | 'MISMATCH';
+
 export const LineItemSchema = z.object({
   id: z.string().optional(),
   description: z.string().min(1, 'Description is required'),
@@ -11,6 +13,9 @@ export const LineItemSchema = z.object({
   unitAmount: z.string().regex(/^\d+(\.\d{1,2})?$/, 'Unit price must be a valid decimal amount'),
   amount: z.string().regex(/^\d+(\.\d{1,2})?$/, 'Total amount must be a valid decimal amount'),
   sourceQuote: z.string().nullable().optional(),
+  startOffset: z.number().nullable().optional(),
+  endOffset: z.number().nullable().optional(),
+  evidenceStatus: z.enum(['VERIFIED', 'AMBIGUOUS', 'NOT FOUND', 'MISMATCH']).optional(),
 });
 
 export type LineItem = z.infer<typeof LineItemSchema>;
@@ -24,7 +29,11 @@ export const SourceEvidenceSchema = z.object({
   sourceQuote: z.string(),
   startOffset: z.number().nullable().optional(),
   endOffset: z.number().nullable().optional(),
+  status: z.enum(['VERIFIED', 'AMBIGUOUS', 'NOT FOUND', 'MISMATCH']).default('VERIFIED'),
   verified: z.boolean().default(true),
+  lineItemIndex: z.number().nullable().optional(),
+  quotedAmount: z.string().nullable().optional(),
+  message: z.string().optional(),
 });
 
 export type SourceEvidence = z.infer<typeof SourceEvidenceSchema>;

@@ -3,8 +3,10 @@ import {
   calculateItemTotal,
   calculateSubtotal,
   verifyQuoteInSource,
+  verifyLineItemEvidence,
   runBillingIntelligenceChecks,
 } from '../lib/billing-math';
+import { extractWithDeterministicEngine } from '../lib/ai-adapter';
 
 describe('Billing Math & Deterministic Arithmetic', () => {
   it('correctly handles 0.10 + 0.20 without binary floating-point drift', () => {
@@ -75,5 +77,119 @@ describe('Billing Math & Deterministic Arithmetic', () => {
       (c) => c.type === 'MISSING_FIELD' && c.field === 'clientEmail'
     );
     expect(missingEmailCheck).toBeDefined();
+  });
+
+  describe('Source Evidence Verification Workflow (User Test Case)', () => {
+    const originalBrief = `Frontend Development: $1,800
+Backend API Development: $1,100
+PayPal Integration: $500
+Total project fee: $3,400`;
+
+    it('extracts all items with exact character offsets and marks them VERIFIED when amounts match', () => {
+      const extraction = extractWithDeterministicEngine(originalBrief);
+
+      expect(extraction.lineItems.length).toBe(3);
+      expect(extraction.calculatedTotal).toBe('3400.00');
+      expect(extraction.statedProjectTotal).toBe('3400.00');
+
+      // 1. Frontend Development: $1,800
+      const item1 = extraction.lineItems[0];
+      expect(item1.description).toBe('Frontend Development');
+      expect(item1.amount).toBe('1800.00');
+      expect(item1.sourceQuote).toBe('Frontend Development: $1,800');
+      expect(item1.startOffset).toBe(0);
+      expect(item1.endOffset).toBe(28);
+      expect(originalBrief.substring(item1.startOffset!, item1.endOffset!)).toBe('Frontend Development: $1,800');
+      expect(item1.evidenceStatus).toBe('VERIFIED');
+
+      // 2. Backend API Development: $1,100
+      const item2 = extraction.lineItems[1];
+      expect(item2.description).toBe('Backend API Development');
+      expect(item2.amount).toBe('1100.00');
+      expect(item2.sourceQuote).toBe('Backend API Development: $1,100');
+      expect(originalBrief.substring(item2.startOffset!, item2.endOffset!)).toBe('Backend API Development: $1,100');
+      expect(item2.evidenceStatus).toBe('VERIFIED');
+
+      // 3. PayPal Integration: $500
+      const item3 = extraction.lineItems[2];
+      expect(item3.description).toBe('PayPal Integration');
+      expect(item3.amount).toBe('500.00');
+      expect(item3.sourceQuote).toBe('PayPal Integration: $500');
+      expect(originalBrief.substring(item3.startOffset!, item3.endOffset!)).toBe('PayPal Integration: $500');
+      expect(item3.evidenceStatus).toBe('VERIFIED');
+
+      // Check evidence array
+      const frontendEvidence = extraction.evidence.find(
+        (e) => e.fieldReference === 'lineItems[0].description'
+      );
+      expect(frontendEvidence?.status).toBe('VERIFIED');
+      expect(frontendEvidence?.verified).toBe(true);
+
+      const totalEvidence = extraction.evidence.find((e) => e.fieldReference === 'statedProjectTotal');
+      expect(totalEvidence?.status).toBe('VERIFIED');
+      expect(totalEvidence?.verified).toBe(true);
+    });
+
+    it('rejects incorrect amount and flags MISMATCH status', () => {
+      // Deliberately introduce incorrect amount $200 for Frontend Development ($1,800)
+      const tamperedItem = {
+        description: 'Frontend Development',
+        quantity: '1',
+        unitAmount: '200.00',
+        amount: '200.00',
+        sourceQuote: 'Frontend Development: $1,800',
+        startOffset: 0,
+        endOffset: 28,
+      };
+
+      const result = verifyLineItemEvidence({
+        item: tamperedItem,
+        rawBrief: originalBrief,
+      });
+
+      expect(result.status).toBe('MISMATCH');
+      expect(result.verified).toBe(false);
+      expect(result.message).toContain('Amount mismatch');
+      expect(result.message).toContain('$1800.00');
+      expect(result.message).toContain('$200.00');
+    });
+
+    it('flags NOT FOUND when quote does not exist in the original brief', () => {
+      const hallucinatedItem = {
+        description: 'Cloud Infrastructure Setup',
+        quantity: '1',
+        unitAmount: '300.00',
+        amount: '300.00',
+        sourceQuote: 'cloud setup $300',
+      };
+
+      const result = verifyLineItemEvidence({
+        item: hallucinatedItem,
+        rawBrief: originalBrief,
+      });
+
+      expect(result.status).toBe('NOT FOUND');
+      expect(result.verified).toBe(false);
+    });
+
+    it('flags AMBIGUOUS when deliverable quote contains no price or rate', () => {
+      const ambiguousBrief = 'We need frontend design. Revisions will be required later.';
+      const ambiguousItem = {
+        description: 'Design revisions',
+        quantity: '1',
+        unitAmount: '100.00',
+        amount: '100.00',
+        sourceQuote: 'Revisions will be required later.',
+      };
+
+      const result = verifyLineItemEvidence({
+        item: ambiguousItem,
+        rawBrief: ambiguousBrief,
+      });
+
+      expect(result.status).toBe('AMBIGUOUS');
+      expect(result.verified).toBe(false);
+      expect(result.message).toContain('ambiguous or unstated');
+    });
   });
 });

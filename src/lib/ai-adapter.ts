@@ -68,105 +68,137 @@ export function extractWithDeterministicEngine(rawBrief: string): AIExtractionOu
     dueDate = new Date().toISOString().split('T')[0];
   }
 
-  // 4. Line Items & Stated Total
+  // 4. Line Items & Stated Total (Dynamic, General-Purpose Extractor with Exact Character Offsets)
   const lineItems: LineItem[] = [];
   const evidence: SourceEvidence[] = [];
   let statedProjectTotal: string | null = null;
 
-  // Check for stated total (handles "Total project fee is USD 800", "Total: $3,400", "total fee of $500", etc.)
-  const totalMatch =
-    text.match(/(?:total project fee|total fee|total contract|total amount|contract total|total)(?:\s+(?:is|of))?[:\s]*(?:USD|\$|EUR|€)?\s*([0-9,]+(?:\.[0-9]{2})?)/i);
+  // Check for stated total (e.g. "Total project fee is USD 800", "Total project fee: $3,400", "Total: $3,400")
+  const totalMatch = text.match(
+    /(?:total project fee|total fee|total contract|total amount|contract total|total)(?:\s+(?:is|of))?[:\s]*(?:USD|\$|EUR|€)?\s*([0-9,]+(?:\.[0-9]{2})?)/i
+  );
 
-  if (totalMatch) {
+  if (totalMatch && totalMatch.index !== undefined) {
     const cleanNum = totalMatch[1].replace(/,/g, '');
     const rawVal = parseFloat(cleanNum).toFixed(2);
     statedProjectTotal = rawVal;
+    const quote = totalMatch[0];
+    const startOffset = totalMatch.index;
+    const endOffset = startOffset + quote.length;
+
     evidence.push({
       fieldReference: 'statedProjectTotal',
-      sourceQuote: totalMatch[0],
+      sourceQuote: quote,
+      startOffset,
+      endOffset,
+      status: 'VERIFIED',
       verified: true,
+      quotedAmount: statedProjectTotal,
     });
   }
 
-  // Check for common task patterns
-  if (lower.includes('frontend') && lower.includes('backend') && lower.includes('payment')) {
-    // Deliberate test case pattern matching Page 6 spec
-    // "Total project fee is USD 800: frontend $200, backend $400 and payment integration $200."
-    lineItems.push({
-      description: 'Frontend Development & Interface',
-      quantity: '1',
-      unitAmount: '200.00',
-      amount: '200.00',
-      sourceQuote: 'frontend $200',
-    });
-    lineItems.push({
-      description: 'Backend API Development',
-      quantity: '1',
-      unitAmount: '400.00',
-      amount: '400.00',
-      sourceQuote: 'backend $400',
-    });
-    lineItems.push({
-      description: 'PayPal Payment Integration',
-      quantity: '1',
-      unitAmount: '200.00',
-      amount: '200.00',
-      sourceQuote: 'payment integration $200',
-    });
+  // General-purpose line-by-line deliverable parser
+  const lines = text.split(/\r?\n/);
+  let searchFromIndex = 0;
 
-    // Check if brief includes deliberate extra line item to test mismatch
-    if (lower.includes('cloud deployment') || lower.includes('$150')) {
-      lineItems.push({
-        description: 'Cloud Infrastructure & Deployment',
-        quantity: '1',
-        unitAmount: '150.00',
-        amount: '150.00',
-        sourceQuote: 'cloud deployment $150',
-      });
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Skip overall total lines and section headers
+    if (/^(?:total\s+project\s+fee|total\s+fee|contract\s+total|total\s+amount|^total:)/i.test(trimmed)) {
+      continue;
     }
-  } else {
-    // Generic line item parser matching deliverables like:
-    // "- UI Mockups & Design Tokens: 1 @ $1200.00" or "- API Spec: $500.00"
-    const lineItemRegex = /(?:[-*•]\s*)([^\n\r:@]+?)(?::|\s+-\s+)(?:\s*(\d+(?:\.\d+)?)\s*@\s*)?(?:USD|\$|EUR|€)?\s*([0-9,]+(?:\.[0-9]{2})?)/gi;
-    const itemMatches = [...text.matchAll(lineItemRegex)];
 
-    if (itemMatches.length > 0) {
-      for (const m of itemMatches) {
-        const desc = m[1].trim();
-        const qty = m[2] ? m[2].trim() : '1';
-        const unit = m[3] ? m[3].replace(/,/g, '') : '0.00';
-        if (desc.toLowerCase().includes('total')) continue;
-        const total = calculateItemTotal(qty, unit);
-        lineItems.push({
-          description: desc,
-          quantity: qty,
-          unitAmount: parseFloat(unit).toFixed(2),
-          amount: total,
-          sourceQuote: m[0].trim(),
-        });
+    // Pattern: [optional bullet/dash] Deliverable Name: [optional qty @] [currency]amount
+    const match = trimmed.match(
+      /^(?:[-*•]\s*)?([^:\n]+?):\s*(?:(\d+(?:\.\d+)?)\s*@\s*)?(?:USD|\$|EUR|€)?\s*([0-9,]+(?:\.[0-9]{2})?)/i
+    );
+
+    if (match) {
+      const desc = match[1].trim();
+      const descLower = desc.toLowerCase();
+      // Skip non-line-item metadata
+      if (
+        descLower.startsWith('client') ||
+        descLower.startsWith('note') ||
+        descLower.startsWith('project reference') ||
+        descLower.startsWith('payment terms') ||
+        descLower.startsWith('billing contact') ||
+        descLower.startsWith('agreed scope')
+      ) {
+        continue;
       }
-    }
 
-    if (lineItems.length === 0) {
-      // Fallback sensible default line item
+      const qty = match[2] ? match[2].trim() : '1';
+      const unit = match[3].replace(/,/g, '');
+      const rawOffset = text.indexOf(trimmed, searchFromIndex);
+      const startOffset = rawOffset !== -1 ? rawOffset : text.indexOf(trimmed);
+      const endOffset = startOffset + trimmed.length;
+      if (rawOffset !== -1) searchFromIndex = endOffset;
+
+      const total = calculateItemTotal(qty, unit);
       lineItems.push({
-        description: 'Professional Freelance Services as agreed',
-        quantity: '1',
-        unitAmount: statedProjectTotal || '1000.00',
-        amount: statedProjectTotal || '1000.00',
-        sourceQuote: text.slice(0, 50),
+        description: desc,
+        quantity: qty,
+        unitAmount: parseFloat(unit).toFixed(2),
+        amount: total,
+        sourceQuote: trimmed,
+        startOffset,
+        endOffset,
+        evidenceStatus: 'VERIFIED',
       });
     }
   }
 
-  // Populate evidence list for each item
+  // Fallback: Check for inline deliverables (e.g., "frontend $200, backend $400 and payment integration $200")
+  if (lineItems.length === 0) {
+    const inlineRegex = /(?:[-*•]\s*)?([A-Za-z0-9\s&/-]+?)\s*(?:is|:|@|\s+of)?\s*(?:USD|\$|EUR|€)\s*([0-9,]+(?:\.[0-9]{2})?)/gi;
+    let m;
+    while ((m = inlineRegex.exec(text)) !== null) {
+      const desc = m[1].trim();
+      if (/total|note|client|fee|agreed/i.test(desc)) continue;
+      const unit = m[2].replace(/,/g, '');
+      const quote = m[0].trim();
+      lineItems.push({
+        description: desc,
+        quantity: '1',
+        unitAmount: parseFloat(unit).toFixed(2),
+        amount: parseFloat(unit).toFixed(2),
+        sourceQuote: quote,
+        startOffset: m.index,
+        endOffset: m.index + m[0].length,
+        evidenceStatus: 'VERIFIED',
+      });
+    }
+  }
+
+  // Ultimate fallback if no price pattern was detected
+  if (lineItems.length === 0) {
+    lineItems.push({
+      description: 'Professional Freelance Services as agreed',
+      quantity: '1',
+      unitAmount: statedProjectTotal || '1000.00',
+      amount: statedProjectTotal || '1000.00',
+      sourceQuote: text.slice(0, 50),
+      startOffset: 0,
+      endOffset: Math.min(50, text.length),
+      evidenceStatus: 'AMBIGUOUS',
+    });
+  }
+
+  // Populate initial evidence list for line items
   for (let i = 0; i < lineItems.length; i++) {
     const item = lineItems[i];
     if (item.sourceQuote) {
       evidence.push({
         fieldReference: `lineItems[${i}].description`,
         sourceQuote: item.sourceQuote,
+        startOffset: item.startOffset ?? null,
+        endOffset: item.endOffset ?? null,
+        status: 'VERIFIED',
         verified: true,
+        lineItemIndex: i,
+        quotedAmount: item.amount,
       });
     }
   }
@@ -289,6 +321,7 @@ Return a JSON object conforming strictly to this format:
     .map((i, idx) => ({
       fieldReference: `lineItems[${idx}].description`,
       sourceQuote: i.sourceQuote!,
+      status: 'VERIFIED' as const,
       verified: true,
     }));
 
@@ -296,6 +329,7 @@ Return a JSON object conforming strictly to this format:
     evidence.push({
       fieldReference: 'statedProjectTotal',
       sourceQuote: String(rawJson.statedProjectTotal),
+      status: 'VERIFIED' as const,
       verified: true,
     });
   }

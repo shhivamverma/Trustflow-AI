@@ -1,4 +1,4 @@
-import { LineItem, ConsistencyCheck, SourceEvidence } from './types';
+import { LineItem, ConsistencyCheck, SourceEvidence, EvidenceStatus } from './types';
 
 /**
  * Converts a decimal string or number to integer cents to guarantee precision
@@ -27,6 +27,24 @@ export function fromCents(cents: number): string {
 }
 
 /**
+ * Extracts a numeric dollar/currency amount in cents from a string snippet
+ */
+export function extractAmountInCents(text: string): number | null {
+  if (!text) return null;
+  // Match e.g. "$1,800.00", "USD 1800", "1,800", "$500"
+  const currencyMatch = text.match(/(?:USD|\$|EUR|€)\s*([0-9,]+(?:\.[0-9]{2})?)/i);
+  if (currencyMatch) {
+    return toCents(currencyMatch[1].replace(/,/g, ''));
+  }
+  const numMatch = text.match(/\b([0-9,]+(?:\.[0-9]{2})?)\b/);
+  if (numMatch) {
+    const parsed = toCents(numMatch[1].replace(/,/g, ''));
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+/**
  * Safely multiplies quantity by unit amount in decimal cents
  */
 export function calculateItemTotal(quantityStr: string, unitAmountStr: string): string {
@@ -51,17 +69,38 @@ export function calculateSubtotal(items: Array<{ quantity: string; unitAmount: s
 
 /**
  * Checks whether an evidence quote actually appears verbatim inside the original raw brief.
- * Returns true if found, and attaches exact character offsets.
+ * Verifies character offsets against the raw text.
  */
 export function verifyQuoteInSource(
   quote: string,
-  rawSource: string
+  rawSource: string,
+  expectedStart?: number | null,
+  expectedEnd?: number | null
 ): { verified: boolean; startOffset: number | null; endOffset: number | null } {
   if (!quote || !rawSource) {
     return { verified: false, startOffset: null, endOffset: null };
   }
 
-  // Exact match
+  // 1. Verify against provided offsets if available
+  if (
+    expectedStart !== null &&
+    expectedStart !== undefined &&
+    expectedEnd !== null &&
+    expectedEnd !== undefined &&
+    expectedStart >= 0 &&
+    expectedEnd > expectedStart &&
+    expectedEnd <= rawSource.length
+  ) {
+    if (rawSource.substring(expectedStart, expectedEnd) === quote) {
+      return {
+        verified: true,
+        startOffset: expectedStart,
+        endOffset: expectedEnd,
+      };
+    }
+  }
+
+  // 2. Exact match search
   const idx = rawSource.indexOf(quote);
   if (idx !== -1) {
     return {
@@ -71,11 +110,12 @@ export function verifyQuoteInSource(
     };
   }
 
-  // Normalized whitespace match
-  const normalizedSource = rawSource.replace(/\s+/g, ' ');
+  // 3. Normalized whitespace match to locate actual raw offsets
   const normalizedQuote = quote.trim().replace(/\s+/g, ' ');
+  const normalizedSource = rawSource.replace(/\s+/g, ' ');
   const normIdx = normalizedSource.indexOf(normalizedQuote);
   if (normIdx !== -1) {
+    // Quote exists in text
     return {
       verified: true,
       startOffset: normIdx,
@@ -84,6 +124,130 @@ export function verifyQuoteInSource(
   }
 
   return { verified: false, startOffset: null, endOffset: null };
+}
+
+export interface LineItemEvidenceResult {
+  status: EvidenceStatus;
+  verified: boolean;
+  startOffset: number | null;
+  endOffset: number | null;
+  sourceQuote: string;
+  quotedAmount: string | null;
+  message: string;
+}
+
+/**
+ * Rigorously verifies a line item against the original project brief:
+ * 1. Checks startOffset & endOffset are valid in rawBrief.
+ * 2. Checks rawBrief.substring(startOffset, endOffset) === sourceQuote verbatim.
+ * 3. Checks quoted amount in source text matches line item amount.
+ * 4. Checks deliverable association between description and quote.
+ *
+ * Statuses:
+ * - VERIFIED: Exact source evidence and amount association confirmed.
+ * - MISMATCH: Evidence amount differs from extracted invoice amount.
+ * - AMBIGUOUS: Evidence exists but rate or deliverable association is uncertain.
+ * - NOT FOUND: Evidence cannot be located in the original brief.
+ */
+export function verifyLineItemEvidence(params: {
+  item: LineItem;
+  rawBrief: string;
+}): LineItemEvidenceResult {
+  const { item, rawBrief } = params;
+  const quote = item.sourceQuote?.trim() || '';
+  const itemCents = toCents(item.amount);
+
+  if (!quote) {
+    return {
+      status: 'NOT FOUND',
+      verified: false,
+      startOffset: null,
+      endOffset: null,
+      sourceQuote: '',
+      quotedAmount: null,
+      message: 'No source evidence quote provided for this line item.',
+    };
+  }
+
+  // 1. Check quote in source text
+  const match = verifyQuoteInSource(quote, rawBrief, item.startOffset, item.endOffset);
+  if (!match.verified || match.startOffset === null || match.endOffset === null) {
+    return {
+      status: 'NOT FOUND',
+      verified: false,
+      startOffset: null,
+      endOffset: null,
+      sourceQuote: quote,
+      quotedAmount: null,
+      message: 'Source evidence quote was not found in the original brief.',
+    };
+  }
+
+  const start = match.startOffset;
+  const end = match.endOffset;
+  const exactSubstring = rawBrief.substring(start, end);
+
+  // 2. Extract and compare amounts
+  const quotedCents = extractAmountInCents(quote);
+  const quotedAmountStr = quotedCents !== null ? fromCents(quotedCents) : null;
+
+  if (quotedCents !== null) {
+    // Check if the amount in the source quote matches the extracted line item amount
+    if (quotedCents !== itemCents) {
+      return {
+        status: 'MISMATCH',
+        verified: false,
+        startOffset: start,
+        endOffset: end,
+        sourceQuote: exactSubstring,
+        quotedAmount: quotedAmountStr,
+        message: `Amount mismatch: Source quote states $${quotedAmountStr}, but invoice line item is $${item.amount}.`,
+      };
+    }
+  } else {
+    // Deliverable found in text, but rate is missing or not explicitly stated
+    return {
+      status: 'AMBIGUOUS',
+      verified: false,
+      startOffset: start,
+      endOffset: end,
+      sourceQuote: exactSubstring,
+      quotedAmount: null,
+      message: 'Deliverable found in source brief, but unit rate is ambiguous or unstated.',
+    };
+  }
+
+  // 3. Check deliverable keyword association
+  const descWords = item.description
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter((w) => w.length > 3);
+  const quoteLower = quote.toLowerCase();
+  const hasKeywordOverlap = descWords.length === 0 || descWords.some((w) => quoteLower.includes(w));
+
+  if (!hasKeywordOverlap) {
+    return {
+      status: 'AMBIGUOUS',
+      verified: false,
+      startOffset: start,
+      endOffset: end,
+      sourceQuote: exactSubstring,
+      quotedAmount: quotedAmountStr,
+      message: 'Amount matches, but deliverable association to this source quote is uncertain.',
+    };
+  }
+
+  // 4. Exact quote + matching offsets + verified amounts!
+  return {
+    status: 'VERIFIED',
+    verified: true,
+    startOffset: start,
+    endOffset: end,
+    sourceQuote: exactSubstring,
+    quotedAmount: quotedAmountStr,
+    message: 'Exact source evidence and amount association confirmed.',
+  };
 }
 
 /**
@@ -211,24 +375,79 @@ export function runBillingIntelligenceChecks(params: {
     });
   }
 
-  // 5. Source Evidence verification against raw brief
-  const validatedEvidence = evidence.map((ev) => {
-    const match = verifyQuoteInSource(ev.sourceQuote, rawBrief);
-    if (!match.verified) {
+  // 5. Source Evidence verification: link line items directly with evidence verification
+  const validatedEvidence: SourceEvidence[] = [];
+
+  for (let i = 0; i < lineItems.length; i++) {
+    const item = lineItems[i];
+    const evResult = verifyLineItemEvidence({ item, rawBrief });
+
+    // Mutate/update line item source properties
+    item.startOffset = evResult.startOffset;
+    item.endOffset = evResult.endOffset;
+    item.evidenceStatus = evResult.status;
+
+    validatedEvidence.push({
+      fieldReference: `lineItems[${i}].description`,
+      sourceQuote: evResult.sourceQuote,
+      startOffset: evResult.startOffset,
+      endOffset: evResult.endOffset,
+      status: evResult.status,
+      verified: evResult.verified,
+      lineItemIndex: i,
+      quotedAmount: evResult.quotedAmount,
+      message: evResult.message,
+    });
+
+    if (evResult.status === 'MISMATCH') {
+      checks.push({
+        type: 'ARITHMETIC_MISMATCH',
+        severity: 'WARNING',
+        message: `Line item #${i + 1} ("${item.description}"): ${evResult.message}`,
+        field: `lineItems[${i}].amount`,
+      });
+    } else if (evResult.status === 'NOT FOUND') {
       checks.push({
         type: 'SCOPE_UNSUPPORTED',
         severity: 'WARNING',
-        message: `Evidence quote "${ev.sourceQuote.slice(0, 45)}..." could not be verified in the source text.`,
-        field: ev.fieldReference,
+        message: `Line item #${i + 1} ("${item.description}"): ${evResult.message}`,
+        field: `lineItems[${i}].description`,
+      });
+    } else if (evResult.status === 'AMBIGUOUS') {
+      checks.push({
+        type: 'AMBIGUITY',
+        severity: 'WARNING',
+        message: `Line item #${i + 1} ("${item.description}"): ${evResult.message}`,
+        field: `lineItems[${i}].description`,
       });
     }
-    return {
-      ...ev,
-      verified: match.verified,
-      startOffset: match.startOffset,
-      endOffset: match.endOffset,
-    };
-  });
+  }
+
+  // Also verify stated total evidence if present
+  if (statedProjectTotal) {
+    const totalEv = evidence.find((e) => e.fieldReference === 'statedProjectTotal');
+    if (totalEv) {
+      const match = verifyQuoteInSource(totalEv.sourceQuote, rawBrief, totalEv.startOffset, totalEv.endOffset);
+      const statedCents = toCents(statedProjectTotal);
+      const isTotalMatch = calculatedCents === statedCents;
+
+      validatedEvidence.push({
+        fieldReference: 'statedProjectTotal',
+        sourceQuote:
+          match.verified && match.startOffset !== null && match.endOffset !== null
+            ? rawBrief.substring(match.startOffset, match.endOffset)
+            : totalEv.sourceQuote,
+        startOffset: match.startOffset,
+        endOffset: match.endOffset,
+        status: !match.verified ? 'NOT FOUND' : isTotalMatch ? 'VERIFIED' : 'MISMATCH',
+        verified: match.verified && isTotalMatch,
+        quotedAmount: statedProjectTotal,
+        message: isTotalMatch
+          ? 'Stated project fee verified against calculated line items.'
+          : `Stated fee ($${statedProjectTotal}) differs from line items sum ($${calculatedSubtotal}).`,
+      });
+    }
+  }
 
   const hasBlockingErrors = checks.some((c) => c.severity === 'ERROR');
 
