@@ -118,7 +118,8 @@ export const STORY_SCENES: StoryScene[] = [
   },
 ];
 
-const SCENE_DURATION_MS = 5000;
+// 6-second slide duration as requested
+const SCENE_DURATION_MS = 6000;
 
 export function StorytellingHero() {
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -126,6 +127,7 @@ export function StorytellingHero() {
   const [isHovered, setIsHovered] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [mouseOffset, setMouseOffset] = useState({ x: 0, y: 0 });
 
   const startTimeRef = useRef<number>(Date.now());
   const animationFrameRef = useRef<number | null>(null);
@@ -157,7 +159,17 @@ export function StorytellingHero() {
     startTimeRef.current = Date.now();
   };
 
-  // Timer loop for auto transition and progress bar
+  // Subtle mouse parallax handler
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (prefersReducedMotion) return;
+    const { clientX, clientY, currentTarget } = e;
+    const rect = currentTarget.getBoundingClientRect();
+    const x = (clientX - rect.left) / rect.width - 0.5;
+    const y = (clientY - rect.top) / rect.height - 0.5;
+    setMouseOffset({ x: -x * 12, y: -y * 8 });
+  };
+
+  // Timer loop for auto transition and continuous progress bar
   useEffect(() => {
     if (prefersReducedMotion || !isPlaying || isHovered) {
       if (animationFrameRef.current) {
@@ -217,59 +229,80 @@ export function StorytellingHero() {
       className="relative w-full min-h-[92vh] lg:min-h-[96vh] flex flex-col justify-between overflow-hidden bg-[#060A12] select-none"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onTouchStart={() => setIsHovered(true)}
+      onTouchEnd={() => setIsHovered(false)}
+      onMouseMove={handleMouseMove}
       aria-label="TrustFlow AI Problem and Solution Storytelling"
     >
       {/* -------------------------------------------------------------------- */}
-      {/* 1. Cinematic Background Layer with Ken Burns Zoom & Crossfade        */}
+      {/* 1. Seamless Cinematic Background Crossfading & Ken Burns Zoom       */}
       {/* -------------------------------------------------------------------- */}
       <div className="absolute inset-0 z-0 overflow-hidden">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeScene.id}
-            initial={{ opacity: 0, scale: 1.08 }}
-            animate={{ opacity: 1, scale: 1.0 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
-            className="absolute inset-0 w-full h-full"
-          >
-            {/* Background Image with Ken Burns animation */}
-            <div className="relative w-full h-full">
-              <Image
-                src={activeScene.imageSrc}
-                alt={activeScene.headline}
-                fill
-                priority
-                sizes="100vw"
-                className="object-cover object-center filter brightness-[0.72] contrast-[1.08]"
-                onError={(e) => {
-                  // If image is still generating, render subtle gradient
-                  e.currentTarget.style.display = 'none';
-                }}
-              />
-            </div>
-          </motion.div>
-        </AnimatePresence>
+        {STORY_SCENES.map((scene, idx) => {
+          const isCurrent = idx === currentIdx;
+          const kenBurnsScale = prefersReducedMotion
+            ? 1.0
+            : isCurrent
+            ? 1.0 + progress * 0.045
+            : 1.0;
 
-        {/* Cinematic Vignette & Deep Navy Multi-stop Gradient Overlays */}
-        <div className="absolute inset-0 bg-gradient-to-t from-[#060A12] via-[#060A12]/75 to-[#060A12]/40" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#060A12]/95 via-[#060A12]/70 to-transparent max-w-4xl" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-cyan-900/20 via-transparent to-transparent pointer-events-none" />
+          return (
+            <div
+              key={scene.id}
+              className={`absolute inset-0 w-full h-full transition-opacity duration-1000 ease-in-out ${
+                isCurrent ? 'opacity-100 z-10 pointer-events-auto' : 'opacity-0 z-0 pointer-events-none'
+              }`}
+            >
+              <div
+                className="relative w-full h-full transition-transform ease-out"
+                style={{
+                  transform: `scale(${kenBurnsScale}) translate(${isCurrent ? mouseOffset.x : 0}px, ${
+                    isCurrent ? mouseOffset.y : 0
+                  }px)`,
+                  transitionDuration: isCurrent ? '120ms' : '1000ms',
+                }}
+              >
+                <Image
+                  src={scene.imageSrc}
+                  alt={scene.headline}
+                  fill
+                  priority={idx <= 1}
+                  sizes="100vw"
+                  className="object-cover object-center filter brightness-[0.84] contrast-[1.06]"
+                />
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Cinematic Vignette Overlays: Balanced for photograph visibility + text readability */}
+        {/* Bottom gradient specifically behind cards and navigation */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#060A12] via-[#060A12]/55 to-transparent z-15 pointer-events-none" />
+
+        {/* Left-hand horizontal scrim behind typography column */}
+        <div className="absolute inset-0 bg-gradient-to-r from-[#060A12]/92 via-[#060A12]/55 to-transparent max-w-3xl z-15 pointer-events-none" />
+
+        {/* Top gradient for navbar blending */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#060A12]/75 via-transparent to-transparent h-32 z-15 pointer-events-none" />
+
+        {/* Subtle cyan ambient rim */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-cyan-900/15 via-transparent to-transparent z-15 pointer-events-none" />
       </div>
 
       {/* -------------------------------------------------------------------- */}
       {/* 2. Top Header Space & Hackathon Badge                                */}
       {/* -------------------------------------------------------------------- */}
-      <div className="relative z-10 pt-24 sm:pt-28 md:pt-32 px-5 sm:px-8 lg:px-12 max-w-7xl mx-auto w-full">
+      <div className="relative z-20 pt-24 sm:pt-28 md:pt-32 px-5 sm:px-8 lg:px-12 max-w-7xl mx-auto w-full">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-mono bg-cyan-950/70 text-cyan-300 border border-cyan-500/30 shadow-lg shadow-cyan-500/10 backdrop-blur-md">
             <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
             <span className="tracking-wide">THE REAL FREELANCER PROBLEM &rarr; TRUSTFLOW SOLUTION</span>
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-950/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+          <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-300 bg-slate-950/70 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/15 shadow-sm">
             <span>SCENE {activeScene.stageNumber} OF 04</span>
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            <span className="text-slate-300">{activeScene.stageBadge}</span>
+            <span className="text-white font-medium">{activeScene.stageBadge}</span>
           </div>
         </div>
 
@@ -280,30 +313,33 @@ export function StorytellingHero() {
           <AnimatePresence mode="wait">
             <motion.div
               key={activeScene.id}
-              initial={{ opacity: 0, y: 16 }}
+              initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.5, ease: 'easeOut' }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.45, ease: 'easeOut' }}
             >
               {/* Scene Indicator Pill */}
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md text-xs font-mono font-semibold uppercase tracking-wider mb-4 border backdrop-blur-md transition-colors"
+              <div
+                className="inline-flex items-center gap-2 px-3 py-1 rounded-md text-xs font-mono font-semibold uppercase tracking-wider mb-4 border backdrop-blur-md transition-colors"
                 style={{
-                  backgroundColor: `${activeScene.accentColor}18`,
-                  borderColor: `${activeScene.accentColor}40`,
+                  backgroundColor: `${activeScene.accentColor}22`,
+                  borderColor: `${activeScene.accentColor}55`,
                   color: activeScene.accentColor,
                 }}
               >
                 <activeScene.icon className="w-3.5 h-3.5" />
-                <span>Stage {activeScene.stageNumber}: {activeScene.stageBadge}</span>
+                <span>
+                  Stage {activeScene.stageNumber}: {activeScene.stageBadge}
+                </span>
               </div>
 
               {/* Dynamic Big Cinematic Headline */}
-              <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-white tracking-tight leading-[1.12] mb-5 drop-shadow-sm">
+              <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-white tracking-tight leading-[1.12] mb-5 drop-shadow-md">
                 {activeScene.headline}
               </h1>
 
               {/* Story Narrative Paragraph */}
-              <p className="text-base sm:text-lg text-slate-300 leading-relaxed font-normal mb-6 max-w-2xl drop-shadow">
+              <p className="text-base sm:text-lg text-slate-200 leading-relaxed font-normal mb-6 max-w-2xl drop-shadow">
                 {activeScene.subheadline}
               </p>
 
@@ -312,7 +348,7 @@ export function StorytellingHero() {
                 {activeScene.bulletPoints.map((point, i) => (
                   <div
                     key={i}
-                    className="flex items-start gap-2 p-2.5 sm:p-3 rounded-xl bg-slate-950/65 backdrop-blur-md border border-white/10 text-xs text-slate-200"
+                    className="flex items-start gap-2 p-2.5 sm:p-3 rounded-xl bg-slate-950/75 backdrop-blur-md border border-white/15 text-xs text-slate-100 shadow-sm"
                   >
                     <CheckCircle2
                       className="w-4 h-4 shrink-0 mt-0.5"
@@ -338,7 +374,7 @@ export function StorytellingHero() {
 
             <button
               onClick={scrollTo3D}
-              className="px-5 py-3.5 rounded-xl glass-panel hover:bg-white/10 text-slate-200 font-semibold text-sm border border-white/15 transition-all hover:scale-105 flex items-center gap-2"
+              className="px-5 py-3.5 rounded-xl bg-slate-950/70 hover:bg-white/10 text-slate-200 font-semibold text-sm border border-white/20 transition-all hover:scale-105 backdrop-blur-md flex items-center gap-2"
             >
               <span>Explore 3D Pipeline</span>
               <ArrowDown className="w-4 h-4 text-cyan-400 animate-bounce" />
@@ -346,7 +382,7 @@ export function StorytellingHero() {
 
             <Link
               href="/dashboard"
-              className="px-4 py-3.5 text-xs text-slate-400 hover:text-white font-medium transition-colors"
+              className="px-4 py-3.5 text-xs text-slate-300 hover:text-white font-medium transition-colors"
             >
               Open Freelancer Dashboard &rarr;
             </Link>
@@ -357,14 +393,14 @@ export function StorytellingHero() {
       {/* -------------------------------------------------------------------- */}
       {/* 4. Bottom Slice-Inspired Storytelling Navigation Bar                  */}
       {/* -------------------------------------------------------------------- */}
-      <div className="relative z-10 px-5 sm:px-8 lg:px-12 pb-6 sm:pb-8 pt-8 max-w-7xl mx-auto w-full">
-        {/* Playback Controls & Progress Indicators */}
+      <div className="relative z-20 px-5 sm:px-8 lg:px-12 pb-6 sm:pb-8 pt-8 max-w-7xl mx-auto w-full">
+        {/* Playback Controls & Status */}
         <div className="flex items-center justify-between gap-4 mb-3">
           <div className="flex items-center gap-2">
             <button
               onClick={handlePrev}
               aria-label="Previous story scene"
-              className="w-8 h-8 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center border border-white/10 transition-colors backdrop-blur-md"
+              className="w-8 h-8 rounded-full bg-slate-900/85 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center border border-white/15 transition-colors backdrop-blur-md shadow-sm"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -372,7 +408,7 @@ export function StorytellingHero() {
             <button
               onClick={() => setIsPlaying(!isPlaying)}
               aria-label={isPlaying ? 'Pause slideshow' : 'Play slideshow'}
-              className="w-8 h-8 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center border border-white/10 transition-colors backdrop-blur-md"
+              className="w-8 h-8 rounded-full bg-slate-900/85 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center border border-white/15 transition-colors backdrop-blur-md shadow-sm"
             >
               {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 ml-0.5" />}
             </button>
@@ -380,13 +416,13 @@ export function StorytellingHero() {
             <button
               onClick={handleNext}
               aria-label="Next story scene"
-              className="w-8 h-8 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center border border-white/10 transition-colors backdrop-blur-md"
+              className="w-8 h-8 rounded-full bg-slate-900/85 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center border border-white/15 transition-colors backdrop-blur-md shadow-sm"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
 
             <span className="text-xs font-mono text-slate-400 ml-2 hidden sm:inline">
-              {isPlaying ? 'Auto-advancing story (4s)' : 'Paused'}
+              {isPlaying ? 'Auto-advancing story (6s)' : 'Paused'}
             </span>
           </div>
 
@@ -395,7 +431,7 @@ export function StorytellingHero() {
           </div>
         </div>
 
-        {/* 4 Story Segment Progress Cards (Slice-Inspired) */}
+        {/* 4 Story Segment Progress Cards (Slice-Inspired, No Text Truncation)  */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3.5">
           {STORY_SCENES.map((scene, idx) => {
             const isActive = idx === currentIdx;
@@ -405,16 +441,16 @@ export function StorytellingHero() {
               <button
                 key={scene.id}
                 onClick={() => goToScene(idx)}
-                className={`text-left p-3 rounded-xl transition-all duration-300 border relative overflow-hidden backdrop-blur-md ${
+                className={`text-left p-3 sm:p-3.5 rounded-xl transition-all duration-300 border relative overflow-hidden backdrop-blur-md flex flex-col justify-between min-h-[96px] sm:min-h-[104px] ${
                   isActive
-                    ? 'bg-slate-900/90 border-cyan-400/50 shadow-lg shadow-cyan-500/10'
-                    : 'bg-slate-950/50 hover:bg-slate-900/60 border-white/10'
+                    ? 'bg-slate-900/95 border-cyan-400/60 shadow-lg shadow-cyan-500/15 ring-1 ring-cyan-400/25'
+                    : 'bg-slate-950/70 hover:bg-slate-900/80 border-white/15'
                 }`}
               >
                 {/* Horizontal Progress Bar Line */}
-                <div className="w-full h-1 bg-white/10 rounded-full mb-2 overflow-hidden">
+                <div className="w-full h-1 bg-white/15 rounded-full mb-2.5 overflow-hidden">
                   <div
-                    className="h-full rounded-full transition-all duration-100"
+                    className="h-full rounded-full transition-all duration-75 ease-linear"
                     style={{
                       backgroundColor: scene.accentColor,
                       width: isActive
@@ -426,27 +462,28 @@ export function StorytellingHero() {
                   />
                 </div>
 
-                {/* Stage Number & Badge */}
-                <div className="flex items-center justify-between text-[10px] font-mono mb-1">
+                {/* Stage Number & Stage Badge */}
+                <div className="flex items-center justify-between text-[10px] font-mono mb-1.5 gap-1">
                   <span className={isActive ? 'text-white font-bold' : 'text-slate-400'}>
                     STAGE {scene.stageNumber}
                   </span>
                   <span
-                    className="text-[9px] px-1.5 py-0.5 rounded font-mono truncate max-w-[100px]"
+                    className="text-[9px] px-1.5 py-0.5 rounded font-mono shrink-0 font-medium"
                     style={{
                       color: scene.accentColor,
-                      backgroundColor: `${scene.accentColor}18`,
+                      backgroundColor: `${scene.accentColor}22`,
                     }}
                   >
                     {scene.stageBadge}
                   </span>
                 </div>
 
-                {/* Stage Mini Headline */}
+                {/* Stage Title: Multi-line, No Truncation, Fully Readable */}
                 <div
-                  className={`text-xs font-semibold truncate ${
-                    isActive ? 'text-white' : 'text-slate-300'
+                  className={`text-xs font-semibold leading-snug line-clamp-2 ${
+                    isActive ? 'text-white font-bold' : 'text-slate-200'
                   }`}
+                  title={scene.headline}
                 >
                   {scene.headline}
                 </div>
