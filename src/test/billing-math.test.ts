@@ -5,6 +5,8 @@ import {
   verifyQuoteInSource,
   verifyLineItemEvidence,
   runBillingIntelligenceChecks,
+  locateTotalInSource,
+  verifyTotalEvidence,
 } from '../lib/billing-math';
 import { extractWithDeterministicEngine } from '../lib/ai-adapter';
 
@@ -190,6 +192,117 @@ Total project fee: $3,400`;
       expect(result.status).toBe('AMBIGUOUS');
       expect(result.verified).toBe(false);
       expect(result.message).toContain('ambiguous or unstated');
+    });
+
+    describe('Regression Test: Total project fee quote location and evidence verification', () => {
+      const briefWithFormattedTotal = `Client: Acme Global
+Services required:
+Frontend Development: $1,800
+Backend API Development: $1,100
+PayPal Integration: $500
+
+Total Project Fee: USD 3,400.00`;
+
+      it('locates "Total Project Fee: USD 3,400.00" verbatim from raw brief with exact character offsets', () => {
+        const located = locateTotalInSource('3400.00', briefWithFormattedTotal);
+        expect(located).not.toBeNull();
+        expect(located?.sourceQuote).toBe('Total Project Fee: USD 3,400.00');
+        expect(located?.startOffset).toBe(briefWithFormattedTotal.indexOf('Total Project Fee: USD 3,400.00'));
+        expect(located?.endOffset).toBe(
+          briefWithFormattedTotal.indexOf('Total Project Fee: USD 3,400.00') + 'Total Project Fee: USD 3,400.00'.length
+        );
+        expect(
+          briefWithFormattedTotal.substring(located!.startOffset, located!.endOffset)
+        ).toBe('Total Project Fee: USD 3,400.00');
+      });
+
+      it('marks stated total evidence VERIFIED when amount and line-item arithmetic match', () => {
+        const lineItems = [
+          { description: 'Frontend Development', quantity: '1', unitAmount: '1800.00', amount: '1800.00' },
+          { description: 'Backend API Development', quantity: '1', unitAmount: '1100.00', amount: '1100.00' },
+          { description: 'PayPal Integration', quantity: '1', unitAmount: '500.00', amount: '500.00' },
+        ];
+
+        const initialEvidence = [
+          {
+            fieldReference: 'statedProjectTotal',
+            sourceQuote: '3400.00', // initially unformatted or bare string
+            startOffset: null,
+            endOffset: null,
+            status: 'VERIFIED' as const,
+            verified: true,
+          },
+        ];
+
+        const result = runBillingIntelligenceChecks({
+          rawBrief: briefWithFormattedTotal,
+          clientName: 'Acme Global',
+          clientEmail: 'billing@acme.com',
+          currency: 'USD',
+          lineItems,
+          statedProjectTotal: '3400.00',
+          evidence: initialEvidence,
+        });
+
+        const totalEv = result.validatedEvidence.find((e) => e.fieldReference === 'statedProjectTotal');
+        expect(totalEv).toBeDefined();
+        expect(totalEv?.status).toBe('VERIFIED');
+        expect(totalEv?.verified).toBe(true);
+        expect(totalEv?.sourceQuote).toBe('Total Project Fee: USD 3,400.00');
+        expect(totalEv?.startOffset).not.toBeNull();
+        expect(totalEv?.endOffset).not.toBeNull();
+        expect(
+          briefWithFormattedTotal.substring(totalEv!.startOffset!, totalEv!.endOffset!)
+        ).toBe('Total Project Fee: USD 3,400.00');
+      });
+
+      it('flags MISMATCH when the located total quote amount does not match line-item total', () => {
+        const tamperedLineItems = [
+          { description: 'Frontend Development', quantity: '1', unitAmount: '1500.00', amount: '1500.00' },
+          { description: 'Backend API Development', quantity: '1', unitAmount: '1000.00', amount: '1000.00' },
+        ]; // Total = 2500.00, stated is 3400.00
+
+        const calculatedSubtotal = calculateSubtotal(tamperedLineItems); // 2500.00, stated is 3400.00
+
+        const result = verifyTotalEvidence({
+          statedProjectTotal: '3400.00',
+          totalEv: {
+            fieldReference: 'statedProjectTotal',
+            sourceQuote: 'Total Project Fee: USD 3,400.00',
+            startOffset: briefWithFormattedTotal.indexOf('Total Project Fee: USD 3,400.00'),
+            endOffset: briefWithFormattedTotal.indexOf('Total Project Fee: USD 3,400.00') + 'Total Project Fee: USD 3,400.00'.length,
+            status: 'VERIFIED',
+            verified: true,
+          },
+          rawBrief: briefWithFormattedTotal,
+          calculatedSubtotal,
+        });
+
+        expect(result.status).toBe('MISMATCH');
+        expect(result.verified).toBe(false);
+        expect(result.message).toContain('differs from line items sum ($2500.00)');
+      });
+
+      it('flags NOT FOUND when stated total does not exist anywhere in the brief', () => {
+        const result = verifyTotalEvidence({
+          statedProjectTotal: '9999.00',
+          totalEv: {
+            fieldReference: 'statedProjectTotal',
+            sourceQuote: '9999.00',
+            startOffset: null,
+            endOffset: null,
+            status: 'VERIFIED',
+            verified: true,
+          },
+          rawBrief: briefWithFormattedTotal,
+          calculatedSubtotal: '9999.00',
+        });
+
+        expect(result.status).toBe('NOT FOUND');
+        expect(result.verified).toBe(false);
+        expect(result.startOffset).toBeNull();
+        expect(result.endOffset).toBeNull();
+      });
     });
   });
 });

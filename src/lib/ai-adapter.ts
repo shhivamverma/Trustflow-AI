@@ -5,7 +5,11 @@ import {
   GeminiConnectionStatus,
   GeminiStatusCategory,
 } from './types';
-import { runBillingIntelligenceChecks, calculateItemTotal } from './billing-math';
+import {
+  runBillingIntelligenceChecks,
+  calculateItemTotal,
+  locateTotalInSource,
+} from './billing-math';
 
 /**
  * Standard prompt sent to Gemini or used by the deterministic rule engine
@@ -498,22 +502,29 @@ Return a JSON object conforming strictly to this format:
     }));
 
   if (rawJson.statedProjectTotal) {
-    const totalQuote = String(rawJson.statedProjectTotal);
-    let startOffset: number | undefined = undefined;
-    let endOffset: number | undefined = undefined;
-    const pos = rawBrief.indexOf(totalQuote);
-    if (pos !== -1) {
-      startOffset = pos;
-      endOffset = pos + totalQuote.length;
+    const rawTotalStr = String(rawJson.statedProjectTotal);
+    const located = locateTotalInSource(rawTotalStr, rawBrief);
+    if (located) {
+      evidence.push({
+        fieldReference: 'statedProjectTotal',
+        sourceQuote: located.sourceQuote,
+        startOffset: located.startOffset,
+        endOffset: located.endOffset,
+        status: 'VERIFIED' as const,
+        verified: true,
+        quotedAmount: rawTotalStr,
+      });
+    } else {
+      evidence.push({
+        fieldReference: 'statedProjectTotal',
+        sourceQuote: rawTotalStr,
+        startOffset: null,
+        endOffset: null,
+        status: 'NOT FOUND' as const,
+        verified: false,
+        quotedAmount: rawTotalStr,
+      });
     }
-    evidence.push({
-      fieldReference: 'statedProjectTotal',
-      sourceQuote: totalQuote,
-      startOffset,
-      endOffset,
-      status: 'VERIFIED' as const,
-      verified: true,
-    });
   }
 
   // Run deterministic billing checks (server code of record!)

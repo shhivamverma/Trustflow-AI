@@ -250,6 +250,187 @@ export function verifyLineItemEvidence(params: {
   };
 }
 
+export interface LocateTotalResult {
+  sourceQuote: string;
+  startOffset: number;
+  endOffset: number;
+}
+
+/**
+ * Deterministically locates the verbatim total project fee statement in the raw brief.
+ * Handles formats such as:
+ * - "Total Project Fee: USD 3,400.00"
+ * - "Total project fee: $3,400"
+ * - "Total project budget: $5,200.00"
+ * - "Total Agreed Project Budget: $5,200.00"
+ * - "Total: $3,400.00"
+ * - "Total fee is USD 800"
+ */
+export function locateTotalInSource(statedTotal: string, rawBrief: string): LocateTotalResult | null {
+  if (!statedTotal || !rawBrief) return null;
+  const statedCents = toCents(statedTotal);
+
+  // 1. Regex search for total phrases with monetary amounts
+  const totalRegexes = [
+    /(?:total\s+(?:agreed\s+)?(?:project\s+)?(?:fee|budget|price|cost|contract|amount)|contract\s+total|agreed\s+total|project\s+total|^total|\btotal)(?:\s+(?:is|of))?[:\s]*(?:USD|\$|EUR|€|CAD|AUD|GBP)?\s*([0-9,]+(?:\.[0-9]{2})?)(?:\s*(?:USD|EUR|GBP|CAD|AUD))?/gi,
+    /(?:USD|\$|EUR|€|CAD|AUD|GBP)\s*([0-9,]+(?:\.[0-9]{2})?)\s*(?:total|total\s+project\s+fee|in\s+total)/gi,
+  ];
+
+  for (const regex of totalRegexes) {
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(rawBrief)) !== null) {
+      const matchedText = match[0];
+      const matchedAmountCents = extractAmountInCents(matchedText);
+
+      if (matchedAmountCents !== null && matchedAmountCents === statedCents) {
+        const start = match.index;
+        const end = start + matchedText.length;
+        return {
+          sourceQuote: rawBrief.substring(start, end),
+          startOffset: start,
+          endOffset: end,
+        };
+      }
+    }
+  }
+
+  // 2. Formatted number search: e.g. "3,400.00", "$3,400.00", "$3,400", "USD 3,400.00"
+  const rawNum = parseFloat(statedTotal);
+  if (!isNaN(rawNum)) {
+    const numVariants = [
+      rawNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      rawNum.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
+      rawNum.toFixed(2),
+      Math.round(rawNum).toString(),
+    ];
+
+    for (const numStr of numVariants) {
+      const pat = new RegExp(`(?:USD|\\$|EUR|€|CAD|AUD|GBP)?\\s*${numStr.replace('.', '\\.')}\\b`, 'i');
+      const m = pat.exec(rawBrief);
+      if (m && m.index !== undefined) {
+        const matchedText = m[0].trim();
+        const cents = extractAmountInCents(matchedText);
+        if (cents === statedCents) {
+          return {
+            sourceQuote: rawBrief.substring(m.index, m.index + m[0].length),
+            startOffset: m.index,
+            endOffset: m.index + m[0].length,
+          };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+export interface TotalEvidenceResult {
+  status: EvidenceStatus;
+  verified: boolean;
+  startOffset: number | null;
+  endOffset: number | null;
+  sourceQuote: string;
+  quotedAmount: string | null;
+  message: string;
+}
+
+/**
+ * Rigorously verifies stated total project fee evidence against the raw brief and calculated line items:
+ * - VERIFIED: Exact source quote found in brief, offsets match, and stated fee equals calculated line items.
+ * - MISMATCH: Quote found in brief, but stated fee differs from calculated line items.
+ * - NOT FOUND: The stated total amount cannot be located anywhere in the brief.
+ */
+export function verifyTotalEvidence(params: {
+  statedProjectTotal: string;
+  totalEv?: SourceEvidence;
+  rawBrief: string;
+  calculatedSubtotal: string;
+}): TotalEvidenceResult {
+  const { statedProjectTotal, totalEv, rawBrief, calculatedSubtotal } = params;
+  const statedCents = toCents(statedProjectTotal);
+  const calculatedCents = toCents(calculatedSubtotal);
+  const isMathMatch = statedCents === calculatedCents;
+
+  // 1. Check if totalEv has valid existing offsets where rawBrief exactly matches sourceQuote
+  if (
+    totalEv?.startOffset !== null &&
+    totalEv?.startOffset !== undefined &&
+    totalEv?.endOffset !== null &&
+    totalEv?.endOffset !== undefined &&
+    totalEv.startOffset >= 0 &&
+    totalEv.endOffset > totalEv.startOffset &&
+    totalEv.endOffset <= rawBrief.length
+  ) {
+    const candidate = rawBrief.substring(totalEv.startOffset, totalEv.endOffset);
+    if (totalEv.sourceQuote && candidate === totalEv.sourceQuote) {
+      const quotedCents = extractAmountInCents(candidate);
+      if (quotedCents === statedCents) {
+        return {
+          status: isMathMatch ? 'VERIFIED' : 'MISMATCH',
+          verified: isMathMatch,
+          startOffset: totalEv.startOffset,
+          endOffset: totalEv.endOffset,
+          sourceQuote: candidate,
+          quotedAmount: statedProjectTotal,
+          message: isMathMatch
+            ? 'Exact source quote and stated project fee confirmed.'
+            : `Stated fee ($${statedProjectTotal}) differs from line items sum ($${calculatedSubtotal}).`,
+        };
+      }
+    }
+  }
+
+  // 2. Check if totalEv.sourceQuote (when not just a bare unquoted amount string) is found in rawBrief
+  if (totalEv?.sourceQuote && totalEv.sourceQuote !== statedProjectTotal) {
+    const idx = rawBrief.indexOf(totalEv.sourceQuote);
+    if (idx !== -1) {
+      const start = idx;
+      const end = idx + totalEv.sourceQuote.length;
+      const quotedCents = extractAmountInCents(totalEv.sourceQuote);
+      if (quotedCents === statedCents) {
+        return {
+          status: isMathMatch ? 'VERIFIED' : 'MISMATCH',
+          verified: isMathMatch,
+          startOffset: start,
+          endOffset: end,
+          sourceQuote: rawBrief.substring(start, end),
+          quotedAmount: statedProjectTotal,
+          message: isMathMatch
+            ? 'Exact source quote and stated project fee confirmed.'
+            : `Stated fee ($${statedProjectTotal}) differs from line items sum ($${calculatedSubtotal}).`,
+        };
+      }
+    }
+  }
+
+  // 3. Dynamically locate the verbatim total statement in rawBrief
+  const located = locateTotalInSource(statedProjectTotal, rawBrief);
+  if (located) {
+    return {
+      status: isMathMatch ? 'VERIFIED' : 'MISMATCH',
+      verified: isMathMatch,
+      startOffset: located.startOffset,
+      endOffset: located.endOffset,
+      sourceQuote: located.sourceQuote,
+      quotedAmount: statedProjectTotal,
+      message: isMathMatch
+        ? 'Exact source quote and stated project fee confirmed.'
+        : `Stated fee ($${statedProjectTotal}) differs from line items sum ($${calculatedSubtotal}).`,
+    };
+  }
+
+  // 4. Stated total could not be found anywhere in rawBrief
+  return {
+    status: 'NOT FOUND',
+    verified: false,
+    startOffset: null,
+    endOffset: null,
+    sourceQuote: totalEv?.sourceQuote || statedProjectTotal,
+    quotedAmount: statedProjectTotal,
+    message: `Stated project total ($${statedProjectTotal}) could not be located in the original brief.`,
+  };
+}
+
 /**
  * Performs deterministic AI Billing Intelligence checks:
  * 1. Line-item sum vs Stated project total (e.g. $800 sum vs $950 stated fee)
@@ -426,27 +607,23 @@ export function runBillingIntelligenceChecks(params: {
   // Also verify stated total evidence if present
   if (statedProjectTotal) {
     const totalEv = evidence.find((e) => e.fieldReference === 'statedProjectTotal');
-    if (totalEv) {
-      const match = verifyQuoteInSource(totalEv.sourceQuote, rawBrief, totalEv.startOffset, totalEv.endOffset);
-      const statedCents = toCents(statedProjectTotal);
-      const isTotalMatch = calculatedCents === statedCents;
+    const totalResult = verifyTotalEvidence({
+      statedProjectTotal,
+      totalEv,
+      rawBrief,
+      calculatedSubtotal,
+    });
 
-      validatedEvidence.push({
-        fieldReference: 'statedProjectTotal',
-        sourceQuote:
-          match.verified && match.startOffset !== null && match.endOffset !== null
-            ? rawBrief.substring(match.startOffset, match.endOffset)
-            : totalEv.sourceQuote,
-        startOffset: match.startOffset,
-        endOffset: match.endOffset,
-        status: !match.verified ? 'NOT FOUND' : isTotalMatch ? 'VERIFIED' : 'MISMATCH',
-        verified: match.verified && isTotalMatch,
-        quotedAmount: statedProjectTotal,
-        message: isTotalMatch
-          ? 'Stated project fee verified against calculated line items.'
-          : `Stated fee ($${statedProjectTotal}) differs from line items sum ($${calculatedSubtotal}).`,
-      });
-    }
+    validatedEvidence.push({
+      fieldReference: 'statedProjectTotal',
+      sourceQuote: totalResult.sourceQuote,
+      startOffset: totalResult.startOffset,
+      endOffset: totalResult.endOffset,
+      status: totalResult.status,
+      verified: totalResult.verified,
+      quotedAmount: totalResult.quotedAmount,
+      message: totalResult.message,
+    });
   }
 
   const hasBlockingErrors = checks.some((c) => c.severity === 'ERROR');
