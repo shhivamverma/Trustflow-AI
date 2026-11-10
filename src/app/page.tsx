@@ -78,15 +78,15 @@ export default function LandingPage() {
       <Navbar />
 
       {/* Hero Section */}
-      <section className="relative pt-10 pb-16 md:pt-16 md:pb-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
-        <div className="text-center max-w-3xl mx-auto mb-10">
+      <section className="relative pt-20 sm:pt-24 md:pt-28 lg:pt-32 pb-16 md:pb-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
+        <div className="text-center max-w-3xl mx-auto mb-10 pt-2 sm:pt-4">
           {/* Hackathon Badge */}
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-cyan-950/70 text-cyan-300 border border-cyan-500/30 mb-6 shadow-sm shadow-cyan-500/10">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full text-xs font-mono bg-cyan-950/70 text-cyan-300 border border-cyan-500/30 mb-6 shadow-sm shadow-cyan-500/10">
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
             <span>PAYPAL AI HACKATHON PROTOTYPE</span>
           </div>
 
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white mb-6 leading-[1.1]">
+          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white mb-6 leading-[1.18] sm:leading-[1.12]">
             From Project Brief to <br />
             <span className="text-gradient-cyan">Verified PayPal Payment</span>
           </h1>
