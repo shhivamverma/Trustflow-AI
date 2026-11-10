@@ -620,7 +620,7 @@ export default function NewInvoicePage() {
                   {extractionResult ? (
                     <span className="text-cyan-300 font-mono flex items-center gap-1">
                       <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400" />
-                      Extracted via {extractionResult.provider}
+                      Extracted via {extractionResult.provider} ({extractionResult.model})
                     </span>
                   ) : (
                     'Ready to parse structured facts'
