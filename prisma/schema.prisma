@@ -1,0 +1,130 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model WorkspaceSettings {
+  id              String   @id @default("default-workspace")
+  displayName     String   @default("Freelancer Studio")
+  defaultCurrency String   @default("USD")
+  demoMode        Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+}
+
+model ProjectBrief {
+  id             String              @id @default(cuid())
+  rawText        String
+  parsedSummary  String?
+  invoices       Invoice[]
+  extractions    InvoiceExtraction[]
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+}
+
+model Invoice {
+  id               String                 @id @default(cuid())
+  briefId          String?
+  brief            ProjectBrief?          @relation(fields: [briefId], references: [id], onDelete: SetNull)
+  clientName       String
+  clientEmail      String
+  currency         String                 @default("USD")
+  subtotal         String                 // Decimal as string for precision
+  total            String                 // Decimal as string for precision
+  dueDate          String?                // YYYY-MM-DD
+  terms            String?
+  projectRef       String?
+  localStatus      String                 @default("DRAFT") // DRAFT, SENT, PAID, PARTIALLY_PAID, OVERDUE, CANCELED, REFUNDED, NEEDS_SYNC
+  paypalInvoiceId  String?
+  hostedInvoiceUrl String?
+  lastSyncedAt     DateTime?
+  idempotencyKey   String?                @unique
+  lineItems        InvoiceLineItem[]
+  evidence         SourceEvidence[]
+  revisions        InvoiceRevision[]
+  statusHistory    InvoiceStatusHistory[]
+  reminderDrafts   ReminderDraft[]
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+}
+
+model InvoiceLineItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  quantity    String   @default("1")
+  unitAmount  String   // Decimal as string
+  amount      String   // Decimal as string (quantity * unitAmount)
+  sourceQuote String?
+  createdAt   DateTime @default(now())
+}
+
+model InvoiceExtraction {
+  id                String        @id @default(cuid())
+  briefId           String?
+  brief             ProjectBrief? @relation(fields: [briefId], references: [id], onDelete: Cascade)
+  structuredOutput  String        // Stored JSON
+  provider          String        // "gemini" or "deterministic-fallback"
+  model             String
+  validationOutcome String        // "VALID", "WARNINGS", "ERRORS"
+  createdAt         DateTime      @default(now())
+}
+
+model SourceEvidence {
+  id             String   @id @default(cuid())
+  invoiceId      String
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  fieldReference String   // e.g. "lineItem[0].description", "total", "clientName"
+  sourceQuote    String
+  startOffset    Int?
+  endOffset      Int?
+  verified       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+}
+
+model InvoiceRevision {
+  id           String   @id @default(cuid())
+  invoiceId    String
+  invoice      Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  beforeValues String   // JSON snapshot
+  afterValues  String   // JSON snapshot
+  actor        String   @default("user") // "user" or "system"
+  action       String   // e.g. "USER_EDIT", "APPROVAL", "EXTRACTION_REPLACE"
+  createdAt    DateTime @default(now())
+}
+
+model InvoiceStatusHistory {
+  id             String   @id @default(cuid())
+  invoiceId      String
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  previousStatus String?
+  newStatus      String
+  source         String   // "sync", "webhook", "manual", "system"
+  reason         String?
+  createdAt      DateTime @default(now())
+}
+
+model WebhookEvent {
+  id            String    @id @default(cuid())
+  paypalEventId String    @unique
+  eventType     String
+  invoiceId     String?
+  payloadHash   String
+  receivedAt    DateTime  @default(now())
+  processedAt   DateTime?
+}
+
+model ReminderDraft {
+  id        String    @id @default(cuid())
+  invoiceId String
+  invoice   Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  message   String
+  createdAt DateTime  @default(now())
+  copiedAt  DateTime?
+}
+
