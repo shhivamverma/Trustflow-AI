@@ -11,6 +11,8 @@ import {
   RotateCcw,
   CheckCircle2,
   AlertTriangle,
+  AlertCircle,
+  XCircle,
   Save,
 } from 'lucide-react';
 
@@ -18,6 +20,7 @@ export default function SettingsPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [testingPayPal, setTestingPayPal] = useState(false);
+  const [testingGemini, setTestingGemini] = useState(false);
   const [resettingDemo, setResettingDemo] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -66,6 +69,37 @@ export default function SettingsPage() {
       setActionMessage({ text: err.message, type: 'error' });
     } finally {
       setTestingPayPal(false);
+    }
+  }
+
+  async function handleTestGemini() {
+    setTestingGemini(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'TEST_GEMINI' }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setActionMessage({ text: json.message, type: 'success' });
+      } else {
+        setActionMessage({ text: json.message || 'Gemini connection failed.', type: 'error' });
+      }
+      if (json.geminiStatus) {
+        setData((prev: any) => ({
+          ...prev,
+          envStatus: {
+            ...prev?.envStatus,
+            geminiStatus: json.geminiStatus,
+          },
+        }));
+      }
+    } catch (err: any) {
+      setActionMessage({ text: err.message, type: 'error' });
+    } finally {
+      setTestingGemini(false);
     }
   }
 
@@ -220,40 +254,130 @@ export default function SettingsPage() {
                 <span>AI Billing Intelligence</span>
               </div>
               <span
-                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
-                  data?.envStatus?.geminiConfigured
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                    : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-bold tracking-wide uppercase ${
+                  data?.envStatus?.geminiStatus?.status === 'CONNECTED'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : data?.envStatus?.geminiStatus?.status === 'KEY_MISSING'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    : data?.envStatus?.geminiStatus?.status === 'AUTH_ERROR'
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                    : data?.envStatus?.geminiStatus?.status === 'RATE_LIMITED'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    : 'bg-red-500/20 text-red-300 border border-red-500/40'
                 }`}
               >
-                {data?.envStatus?.geminiConfigured ? 'GEMINI API' : 'DETERMINISTIC COPILOT'}
+                {data?.envStatus?.geminiStatus?.status === 'CONNECTED' && 'GEMINI API CONNECTED'}
+                {data?.envStatus?.geminiStatus?.status === 'KEY_MISSING' && 'GEMINI API KEY MISSING'}
+                {data?.envStatus?.geminiStatus?.status === 'AUTH_ERROR' && 'AUTHENTICATION FAILED'}
+                {data?.envStatus?.geminiStatus?.status === 'RATE_LIMITED' && 'RATE LIMIT EXCEEDED'}
+                {data?.envStatus?.geminiStatus?.status === 'API_ERROR' && 'API REQUEST ERROR'}
+                {!data?.envStatus?.geminiStatus && (data?.envStatus?.geminiConfigured ? 'CHECKING...' : 'KEY MISSING')}
               </span>
             </div>
 
             <p className="text-xs text-slate-400">
-              Processes unstructured project briefs into structured facts, checks consistency, and validates source evidence.
+              Processes unstructured project briefs into structured facts, checks consistency, and validates verbatim source evidence.
             </p>
 
             <div className="space-y-2 text-xs font-mono bg-midnight-950 p-3 rounded-xl border border-white/5">
-              <div className="flex justify-between text-slate-400">
-                <span>AI Model:</span>
-                <span className="text-slate-200">
-                  {data?.envStatus?.geminiConfigured ? 'Google Gemini 2.0 Flash' : 'Deterministic Billing Engine'}
+              <div className="flex justify-between items-center text-slate-400">
+                <span>Connection:</span>
+                <span className="font-semibold flex items-center gap-1.5">
+                  {data?.envStatus?.geminiStatus?.status === 'CONNECTED' ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="text-emerald-400">Gemini API Connected</span>
+                    </>
+                  ) : data?.envStatus?.geminiStatus?.status === 'KEY_MISSING' ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-amber-400" />
+                      <span className="text-amber-400">Gemini API Key Missing</span>
+                    </>
+                  ) : data?.envStatus?.geminiStatus?.status === 'AUTH_ERROR' ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-rose-400" />
+                      <span className="text-rose-400">Authentication Failed</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-red-400" />
+                      <span className="text-red-400">API Error</span>
+                    </>
+                  )}
                 </span>
               </div>
+
+              <div className="flex justify-between text-slate-400">
+                <span>Active Model:</span>
+                <span className="text-slate-200">
+                  {data?.envStatus?.geminiStatus?.status === 'CONNECTED'
+                    ? `Google Gemini (${data?.envStatus?.geminiStatus?.model || 'gemini-3-flash-preview'})`
+                    : 'Deterministic Billing Engine'}
+                </span>
+              </div>
+
+              <div className="flex justify-between text-slate-400">
+                <span>API Key:</span>
+                <span className="text-slate-200">
+                  {data?.envStatus?.geminiStatus?.keyMasked ||
+                    (data?.envStatus?.geminiConfigured ? 'Configured in .env' : 'Not set in .env')}
+                </span>
+              </div>
+
+              <div className="flex justify-between text-slate-400">
+                <span>Failover Safeguard:</span>
+                <span className="text-emerald-400">Deterministic Engine Active</span>
+              </div>
+
               <div className="flex justify-between text-slate-400">
                 <span>Arithmetic Calculator:</span>
-                <span className="text-emerald-400">Deterministic Server Code</span>
-              </div>
-              <div className="flex justify-between text-slate-400">
-                <span>Source Traceability:</span>
-                <span className="text-cyan-400">Offset &amp; Quote Verifier</span>
+                <span className="text-cyan-400">Deterministic Server Code</span>
               </div>
             </div>
 
-            <div className="text-[11px] text-slate-400 bg-white/5 p-2.5 rounded-lg border border-white/5">
-              💡 To enable live Gemini calls, add <code className="text-cyan-300">GEMINI_API_KEY</code> to your <code className="text-cyan-300">.env</code>. The built-in deterministic engine provides complete fidelity if no key is supplied.
+            {/* Diagnostic Message Box (Replaces hardcoded helper message) */}
+            <div
+              className={`text-[11px] p-3 rounded-xl border leading-relaxed ${
+                data?.envStatus?.geminiStatus?.status === 'CONNECTED'
+                  ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'
+                  : data?.envStatus?.geminiStatus?.status === 'KEY_MISSING'
+                  ? 'bg-amber-500/10 border-amber-500/25 text-amber-200'
+                  : 'bg-rose-500/10 border-rose-500/25 text-rose-200'
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                {data?.envStatus?.geminiStatus?.status === 'CONNECTED' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                )}
+                <div className="space-y-1">
+                  <div className="font-semibold text-white">
+                    {data?.envStatus?.geminiStatus?.status === 'CONNECTED'
+                      ? 'Gemini Live Extraction Ready'
+                      : data?.envStatus?.geminiStatus?.status === 'KEY_MISSING'
+                      ? 'Deterministic Standalone Copilot Mode'
+                      : 'Gemini Diagnostic Notice'}
+                  </div>
+                  <div>
+                    {data?.envStatus?.geminiStatus?.message ||
+                      (data?.envStatus?.geminiConfigured
+                        ? 'Gemini API is configured in environment.'
+                        : 'GEMINI_API_KEY is missing from environment. Using local deterministic billing engine.')}
+                  </div>
+                </div>
+              </div>
             </div>
+
+            {/* Test Gemini Button */}
+            <button
+              onClick={handleTestGemini}
+              disabled={testingGemini}
+              className="w-full py-2 px-3 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 font-semibold text-xs transition-colors flex items-center justify-center gap-2"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${testingGemini ? 'animate-spin' : ''}`} />
+              <span>Test Gemini API Connection</span>
+            </button>
           </div>
         </div>
 

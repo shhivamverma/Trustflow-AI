@@ -1,4 +1,10 @@
-import { AIExtractionOutput, LineItem, SourceEvidence } from './types';
+import {
+  AIExtractionOutput,
+  LineItem,
+  SourceEvidence,
+  GeminiConnectionStatus,
+  GeminiStatusCategory,
+} from './types';
 import { runBillingIntelligenceChecks, calculateItemTotal } from './billing-math';
 
 /**
@@ -250,10 +256,140 @@ export function extractWithDeterministicEngine(rawBrief: string): AIExtractionOu
 }
 
 /**
+ * Gemini models in order of preferred execution and resilience
+ */
+export const GEMINI_CANDIDATE_MODELS = [
+  'gemini-3-flash-preview',
+  'gemini-3.8-flash',
+  'gemini-flash-lite-latest',
+  'gemini-3.1-flash-lite',
+];
+
+let cachedGeminiStatus: GeminiConnectionStatus | null = null;
+let lastCheckTime = 0;
+const CACHE_TTL_MS = 60 * 1000; // 1 minute cache
+
+/**
+ * Health check that verifies actual Google Gemini API connection using configured key
+ */
+export async function checkGeminiConnection(
+  apiKey?: string,
+  forceCheck = false
+): Promise<GeminiConnectionStatus> {
+  const key = apiKey !== undefined ? apiKey.trim() : process.env.GEMINI_API_KEY?.trim();
+
+  if (!key || key.length < 5 || key.includes('YOUR_GEMINI_API_KEY')) {
+    const status: GeminiConnectionStatus = {
+      status: 'KEY_MISSING',
+      configured: false,
+      message: 'GEMINI_API_KEY is not configured in environment variables (.env).',
+      keyMasked: null,
+      testedAt: new Date().toISOString(),
+    };
+    if (apiKey === undefined) {
+      cachedGeminiStatus = status;
+      lastCheckTime = Date.now();
+    }
+    return status;
+  }
+
+  if (!forceCheck && cachedGeminiStatus && Date.now() - lastCheckTime < CACHE_TTL_MS) {
+    return cachedGeminiStatus;
+  }
+
+  const keyMasked = `${key.slice(0, 6)}...${key.slice(-4)}`;
+  let lastErrorCategory: GeminiStatusCategory = 'API_ERROR';
+  let lastErrorMessage = '';
+
+  for (const model of GEMINI_CANDIDATE_MODELS) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+    try {
+      const hasGlobalWindow = typeof window !== 'undefined';
+      let signal: any = undefined;
+      if (!hasGlobalWindow && typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        signal = AbortSignal.timeout(7000);
+      }
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: 'Respond with JSON: {"ok": true}' }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+          },
+        }),
+        ...(signal ? { signal } : {}),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          const status: GeminiConnectionStatus = {
+            status: 'CONNECTED',
+            configured: true,
+            model,
+            message: `Gemini API connected successfully using model ${model}.`,
+            testedAt: new Date().toISOString(),
+            keyMasked,
+          };
+          cachedGeminiStatus = status;
+          lastCheckTime = Date.now();
+          return status;
+        }
+      }
+
+      if (res.status === 400 || res.status === 401 || res.status === 403) {
+        lastErrorCategory = 'AUTH_ERROR';
+        const errJson = await res.json().catch(() => ({}));
+        lastErrorMessage =
+          errJson?.error?.message || `Authentication failed (HTTP ${res.status}). Verify GEMINI_API_KEY.`;
+        break; // Auth error applies to all models for this key
+      }
+
+      if (res.status === 429) {
+        lastErrorCategory = 'RATE_LIMITED';
+        lastErrorMessage = 'Gemini API rate limit or quota exceeded. Please try again in a few moments.';
+        continue;
+      }
+
+      if (res.status === 503) {
+        lastErrorCategory = 'API_ERROR';
+        lastErrorMessage = `Model ${model} is experiencing temporary high demand (HTTP 503).`;
+        continue;
+      }
+
+      const errJson = await res.json().catch(() => ({}));
+      lastErrorMessage = errJson?.error?.message || `Gemini API returned HTTP ${res.status}.`;
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        lastErrorMessage = `Gemini API probe timed out after 7s for model ${model}.`;
+      } else {
+        lastErrorMessage = err.message || 'Network error reaching Google Generative Language API.';
+      }
+    }
+  }
+
+  const resultStatus: GeminiConnectionStatus = {
+    status: lastErrorCategory,
+    configured: true,
+    message: lastErrorMessage || 'Unable to connect to Gemini API.',
+    testedAt: new Date().toISOString(),
+    keyMasked,
+  };
+  cachedGeminiStatus = resultStatus;
+  lastCheckTime = Date.now();
+  return resultStatus;
+}
+
+/**
  * Gemini Live API Extraction
  */
 export async function extractWithGemini(apiKey: string, rawBrief: string): Promise<AIExtractionOutput> {
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  let lastError: Error | null = null;
+  let chosenModel = '';
+  let rawJson: any = null;
 
   const userPrompt = `
 Extract structured invoice details from this freelance project brief:
@@ -282,53 +418,99 @@ Return a JSON object conforming strictly to this format:
 }
 `;
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: EXTRACTION_SYSTEM_PROMPT + '\n' + userPrompt }] }],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.1,
-      },
-    }),
+  for (const model of GEMINI_CANDIDATE_MODELS) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: EXTRACTION_SYSTEM_PROMPT + '\n' + userPrompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Gemini API error [${response.status}]: ${errText}`);
+      }
+
+      const data = await response.json();
+      const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!textContent) {
+        throw new Error(`Empty response from Gemini API model ${model}`);
+      }
+
+      rawJson = JSON.parse(textContent);
+      chosenModel = model;
+      break;
+    } catch (err: any) {
+      console.warn(`Extraction attempt with model ${model} failed:`, err.message);
+      lastError = err;
+    }
+  }
+
+  if (!rawJson) {
+    throw lastError || new Error('All Gemini candidate models failed to extract structured data');
+  }
+
+  // Validate line items and format with character offsets
+  const lineItems: LineItem[] = (rawJson.lineItems || []).map((item: any) => {
+    const desc = String(item.description || 'Deliverable');
+    const qty = String(item.quantity || '1');
+    const unit = String(item.unitAmount || '0.00');
+    const amt = calculateItemTotal(qty, unit);
+    const quote = item.sourceQuote ? String(item.sourceQuote).trim() : null;
+
+    let startOffset: number | undefined = undefined;
+    let endOffset: number | undefined = undefined;
+    if (quote) {
+      const pos = rawBrief.indexOf(quote);
+      if (pos !== -1) {
+        startOffset = pos;
+        endOffset = pos + quote.length;
+      }
+    }
+
+    return {
+      description: desc,
+      quantity: qty,
+      unitAmount: unit,
+      amount: amt,
+      sourceQuote: quote,
+      startOffset,
+      endOffset,
+    };
   });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Gemini API error [${response.status}]: ${errText}`);
-  }
-
-  const data = await response.json();
-  const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!textContent) {
-    throw new Error('Empty response from Gemini API');
-  }
-
-  const rawJson = JSON.parse(textContent);
-
-  // Validate line items and format
-  const lineItems: LineItem[] = (rawJson.lineItems || []).map((item: any) => ({
-    description: String(item.description || 'Deliverable'),
-    quantity: String(item.quantity || '1'),
-    unitAmount: String(item.unitAmount || '0.00'),
-    amount: calculateItemTotal(String(item.quantity || '1'), String(item.unitAmount || '0.00')),
-    sourceQuote: item.sourceQuote || null,
-  }));
 
   const evidence: SourceEvidence[] = lineItems
     .filter((i) => i.sourceQuote)
     .map((i, idx) => ({
       fieldReference: `lineItems[${idx}].description`,
       sourceQuote: i.sourceQuote!,
+      startOffset: i.startOffset,
+      endOffset: i.endOffset,
       status: 'VERIFIED' as const,
       verified: true,
     }));
 
   if (rawJson.statedProjectTotal) {
+    const totalQuote = String(rawJson.statedProjectTotal);
+    let startOffset: number | undefined = undefined;
+    let endOffset: number | undefined = undefined;
+    const pos = rawBrief.indexOf(totalQuote);
+    if (pos !== -1) {
+      startOffset = pos;
+      endOffset = pos + totalQuote.length;
+    }
     evidence.push({
       fieldReference: 'statedProjectTotal',
-      sourceQuote: String(rawJson.statedProjectTotal),
+      sourceQuote: totalQuote,
+      startOffset,
+      endOffset,
       status: 'VERIFIED' as const,
       verified: true,
     });
@@ -376,6 +558,6 @@ Return a JSON object conforming strictly to this format:
     evidence: validatedEvidence,
     rawBrief,
     provider: 'gemini',
-    model: 'gemini-2.0-flash',
+    model: chosenModel,
   };
 }

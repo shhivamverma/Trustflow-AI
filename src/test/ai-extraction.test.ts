@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractWithDeterministicEngine } from '../lib/ai-adapter';
+import { extractWithDeterministicEngine, checkGeminiConnection } from '../lib/ai-adapter';
 import { AIExtractionOutputSchema } from '../lib/types';
 
 describe('AI Billing Intelligence & Extraction Engine', () => {
@@ -69,6 +69,19 @@ Also including cloud deployment $150.
       expect(ev.verified).toBe(true);
       expect(brief).toContain(ev.sourceQuote);
     }
+  });
+
+  it('correctly reports KEY_MISSING when GEMINI_API_KEY is absent or empty', async () => {
+    const status = await checkGeminiConnection('', true);
+    expect(status.status).toBe('KEY_MISSING');
+    expect(status.configured).toBe(false);
+    expect(status.message).toContain('not configured');
+  });
+
+  it('correctly reports AUTH_ERROR when an invalid GEMINI_API_KEY is supplied', async () => {
+    const status = await checkGeminiConnection('AIzaSyDummyInvalidKeyForTest987654321', true);
+    expect(status.status).toBe('AUTH_ERROR');
+    expect(status.configured).toBe(true);
   });
 });
 

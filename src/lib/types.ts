@@ -74,6 +74,26 @@ export const AIExtractionOutputSchema = z.object({
 export type AIExtractionOutput = z.infer<typeof AIExtractionOutputSchema>;
 
 /* -------------------------------------------------------------------------- */
+/* Gemini Connection & Diagnostics Types                                      */
+/* -------------------------------------------------------------------------- */
+
+export type GeminiStatusCategory =
+  | 'CONNECTED'
+  | 'KEY_MISSING'
+  | 'AUTH_ERROR'
+  | 'API_ERROR'
+  | 'RATE_LIMITED';
+
+export interface GeminiConnectionStatus {
+  status: GeminiStatusCategory;
+  configured: boolean;
+  model?: string;
+  message: string;
+  testedAt?: string;
+  keyMasked?: string | null;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Invoice Entity & State Types                                               */
 /* -------------------------------------------------------------------------- */
 

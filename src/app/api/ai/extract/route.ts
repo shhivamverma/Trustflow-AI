@@ -30,11 +30,12 @@ export async function POST(req: NextRequest) {
     const geminiKey = process.env.GEMINI_API_KEY?.trim();
     let extractionResult;
 
-    if (geminiKey && geminiKey.length > 10) {
+    if (geminiKey && geminiKey.length > 5) {
       try {
         extractionResult = await extractWithGemini(geminiKey, rawBrief);
+        console.log(`[AI Extraction] Successfully parsed with Gemini model: ${extractionResult.model}`);
       } catch (err: any) {
-        console.warn('Gemini extraction failed, falling back to deterministic billing engine:', err.message);
+        console.warn('[AI Extraction] Gemini extraction failed, falling back to deterministic billing engine:', err.message);
         extractionResult = extractWithDeterministicEngine(rawBrief);
       }
     } else {

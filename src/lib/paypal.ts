@@ -54,7 +54,14 @@ export interface PayPalInvoicePayload {
 export function isPayPalConfigured(): boolean {
   const id = process.env.PAYPAL_CLIENT_ID?.trim();
   const secret = process.env.PAYPAL_CLIENT_SECRET?.trim();
-  return Boolean(id && secret && id.length > 5 && secret.length > 5);
+  return Boolean(
+    id &&
+    secret &&
+    id.length > 5 &&
+    secret.length > 5 &&
+    !id.includes('YOUR_CLIENT_ID') &&
+    !secret.includes('YOUR_CLIENT_SECRET')
+  );
 }
 
 export function getPayPalBaseUrl(): string {

@@ -1,13 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getPayPalAccessToken } from '@/lib/paypal';
+import { checkGeminiConnection } from '@/lib/ai-adapter';
 
 export async function GET() {
   try {
-    const hasPayPalId = !!process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_ID.trim().length > 5;
-    const hasPayPalSecret = !!process.env.PAYPAL_CLIENT_SECRET && process.env.PAYPAL_CLIENT_SECRET.trim().length > 5;
-    const hasWebhook = !!process.env.PAYPAL_WEBHOOK_ID && process.env.PAYPAL_WEBHOOK_ID.trim().length > 5;
-    const hasGemini = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5;
+    const hasPayPalId =
+      !!process.env.PAYPAL_CLIENT_ID &&
+      process.env.PAYPAL_CLIENT_ID.trim().length > 5 &&
+      !process.env.PAYPAL_CLIENT_ID.includes('YOUR_CLIENT_ID');
+    const hasPayPalSecret =
+      !!process.env.PAYPAL_CLIENT_SECRET &&
+      process.env.PAYPAL_CLIENT_SECRET.trim().length > 5 &&
+      !process.env.PAYPAL_CLIENT_SECRET.includes('YOUR_CLIENT_SECRET');
+    const hasWebhook =
+      !!process.env.PAYPAL_WEBHOOK_ID &&
+      process.env.PAYPAL_WEBHOOK_ID.trim().length > 5 &&
+      !process.env.PAYPAL_WEBHOOK_ID.includes('YOUR_WEBHOOK_ID');
+    const hasGemini =
+      !!process.env.GEMINI_API_KEY &&
+      process.env.GEMINI_API_KEY.trim().length > 5 &&
+      !process.env.GEMINI_API_KEY.includes('YOUR_GEMINI_API_KEY');
+
+    // Check actual Gemini health/connection status
+    const geminiStatus = await checkGeminiConnection();
 
     // Get or create workspace settings
     let workspace = await prisma.workspaceSettings.findFirst();
@@ -30,6 +46,7 @@ export async function GET() {
         paypalBaseUrl: process.env.PAYPAL_BASE_URL || 'https://api-m.sandbox.paypal.com',
         paypalWebhookConfigured: hasWebhook,
         geminiConfigured: hasGemini,
+        geminiStatus,
       },
     });
   } catch (error: any) {
@@ -78,6 +95,36 @@ export async function POST(req: NextRequest) {
           {
             success: false,
             message: `PayPal Sandbox OAuth verification failed: ${err.message}. Deterministic demo mode will be used for continuity.`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (action === 'TEST_GEMINI') {
+      try {
+        const geminiStatus = await checkGeminiConnection(undefined, true);
+        if (geminiStatus.status === 'CONNECTED') {
+          return NextResponse.json({
+            success: true,
+            geminiStatus,
+            message: geminiStatus.message,
+          });
+        } else {
+          return NextResponse.json(
+            {
+              success: false,
+              geminiStatus,
+              message: geminiStatus.message,
+            },
+            { status: 400 }
+          );
+        }
+      } catch (err: any) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: `Gemini API check failed: ${err.message}`,
           },
           { status: 400 }
         );
