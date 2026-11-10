@@ -1,6 +1,7 @@
 import {
   AIExtractionOutput,
   LineItem,
+  UnpricedScopeItem,
   SourceEvidence,
   GeminiConnectionStatus,
   GeminiStatusCategory,
@@ -24,6 +25,14 @@ NON-NEGOTIABLE RULES:
 3. Every line item must have a verbatim "sourceQuote" copied directly from the brief.
 4. If a stated project fee or total is mentioned, record it in "statedProjectTotal".
 5. Monetary amounts must be clean decimal strings with 2 decimal places (e.g. "250.00").
+6. If the brief mentions deliverables, revision rounds, or scope items that do NOT have an agreed monetary rate or price (e.g. "(rate to be negotiated based on scope)", or unpriced tasks), DO NOT invent a price. DO NOT put them in "lineItems". Instead, place them into "unpricedScopeItems":
+   [
+     {
+       "description": string,
+       "sourceQuote": string,
+       "reason": string
+     }
+   ]
 `;
 
 /**
@@ -110,12 +119,35 @@ export function extractWithDeterministicEngine(rawBrief: string): AIExtractionOu
   // General-purpose line-by-line deliverable parser
   const lines = text.split(/\r?\n/);
   let searchFromIndex = 0;
+  const unpricedScopeItems: UnpricedScopeItem[] = [];
+  const ambiguities: string[] = [];
+  let inDeliverablesSection = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    // Skip overall total lines and section headers
+
+    // Track deliverable section headers
+    if (/^(?:agreed deliverables|deliverables|scope and agreed milestones|agreed scope breakdown|agreed scope|scope):/i.test(trimmed)) {
+      inDeliverablesSection = true;
+      continue;
+    }
+
+    // Skip overall total lines and exit deliverables section
     if (/^(?:total\s+project\s+fee|total\s+fee|contract\s+total|total\s+amount|^total:)/i.test(trimmed)) {
+      inDeliverablesSection = false;
+      continue;
+    }
+
+    const trimmedLower = trimmed.toLowerCase();
+    // Skip non-line-item metadata lines
+    if (
+      trimmedLower.startsWith('client:') ||
+      trimmedLower.startsWith('billing contact:') ||
+      trimmedLower.startsWith('project reference:') ||
+      trimmedLower.startsWith('payment terms:') ||
+      trimmedLower.startsWith('note:')
+    ) {
       continue;
     }
 
@@ -157,6 +189,40 @@ export function extractWithDeterministicEngine(rawBrief: string): AIExtractionOu
         endOffset,
         evidenceStatus: 'VERIFIED',
       });
+    } else {
+      // Check for unpriced deliverable / scope items pending clarification
+      const isBulletOrNumbered = /^[-*•]\s+(.+)/.test(trimmed) || /^\d+\.\s+(.+)/.test(trimmed);
+      const hasUnpricedKeyword = /rate to be negotiated|to be negotiated|hourly rate tbd|tbd|tbc|to be discussed|pending scope/i.test(trimmed);
+
+      if ((isBulletOrNumbered || inDeliverablesSection || hasUnpricedKeyword) && !/total/i.test(trimmed)) {
+        const cleanDesc = trimmed.replace(/^[-*•]\s*/, '').replace(/^\d+\.\s*/, '').trim();
+        if (cleanDesc.length > 3) {
+          const rawOffset = text.indexOf(trimmed, searchFromIndex);
+          const startOffset = rawOffset !== -1 ? rawOffset : text.indexOf(trimmed);
+          const endOffset = startOffset + trimmed.length;
+          if (rawOffset !== -1) searchFromIndex = endOffset;
+
+          let reason = 'Pricing unstated in brief (pending clarification)';
+          if (/rate to be negotiated|negotiated/i.test(trimmed)) {
+            reason = 'Rate to be negotiated based on scope';
+          } else if (/tbd|tbc|to be discussed/i.test(trimmed)) {
+            reason = 'Rate TBD / To be discussed';
+          }
+
+          unpricedScopeItems.push({
+            id: `scope-${unpricedScopeItems.length + 1}`,
+            description: cleanDesc,
+            sourceQuote: trimmed,
+            startOffset,
+            endOffset,
+            reason,
+            status: 'PENDING_CLARIFICATION',
+            evidenceStatus: 'AMBIGUOUS',
+          });
+
+          ambiguities.push(`Unpriced scope item requiring rate clarification: "${cleanDesc}" (${reason})`);
+        }
+      }
     }
   }
 
@@ -220,6 +286,7 @@ export function extractWithDeterministicEngine(rawBrief: string): AIExtractionOu
     clientEmail,
     currency,
     lineItems,
+    unpricedScopeItems,
     statedProjectTotal,
     dueDate,
     evidence,
@@ -235,6 +302,7 @@ export function extractWithDeterministicEngine(rawBrief: string): AIExtractionOu
     clientEmail,
     currency,
     lineItems,
+    unpricedScopeItems,
     statedProjectTotal,
     calculatedTotal: calculatedSubtotal,
     dueDate,
@@ -250,7 +318,7 @@ export function extractWithDeterministicEngine(rawBrief: string): AIExtractionOu
       },
     },
     missingFields,
-    ambiguities: [],
+    ambiguities,
     consistencyChecks: checks,
     evidence: validatedEvidence,
     rawBrief: text,
@@ -415,6 +483,13 @@ Return a JSON object conforming strictly to this format:
       "sourceQuote": string
     }
   ],
+  "unpricedScopeItems": [
+    {
+      "description": string,
+      "sourceQuote": string,
+      "reason": string
+    }
+  ],
   "statedProjectTotal": string | null,
   "dueDate": string | null (YYYY-MM-DD),
   "paymentTerms": string | null,
@@ -461,14 +536,81 @@ Return a JSON object conforming strictly to this format:
     throw lastError || new Error('All Gemini candidate models failed to extract structured data');
   }
 
-  // Validate line items and format with character offsets
-  const lineItems: LineItem[] = (rawJson.lineItems || []).map((item: any) => {
-    const desc = String(item.description || 'Deliverable');
+  // Validate line items and unpriced scope items with character offsets
+  const rawLineItems = Array.isArray(rawJson.lineItems) ? rawJson.lineItems : [];
+  const rawUnpricedItems = Array.isArray(rawJson.unpricedScopeItems) ? rawJson.unpricedScopeItems : [];
+
+  const lineItems: LineItem[] = [];
+  const unpricedScopeItems: UnpricedScopeItem[] = [];
+  const ambiguities: string[] = [];
+
+  // 1. Process explicit unpricedScopeItems from Gemini
+  for (const item of rawUnpricedItems) {
+    const desc = String(item.description || '').trim();
+    const quote = item.sourceQuote ? String(item.sourceQuote).trim() : desc;
+    if (!desc) continue;
+
+    let startOffset: number | null = null;
+    let endOffset: number | null = null;
+    if (quote) {
+      const pos = rawBrief.indexOf(quote);
+      if (pos !== -1) {
+        startOffset = pos;
+        endOffset = pos + quote.length;
+      }
+    }
+
+    const reason = item.reason ? String(item.reason).trim() : 'Pricing unstated in brief';
+    unpricedScopeItems.push({
+      id: `scope-${unpricedScopeItems.length + 1}`,
+      description: desc,
+      sourceQuote: quote,
+      startOffset,
+      endOffset,
+      reason,
+      status: 'PENDING_CLARIFICATION',
+      evidenceStatus: 'AMBIGUOUS',
+    });
+    ambiguities.push(`Unpriced scope item requiring rate clarification: "${desc}" (${reason})`);
+  }
+
+  // 2. Validate line items defensively (never invent $0 or unpriced line items)
+  for (const item of rawLineItems) {
+    const desc = String(item.description || 'Deliverable').trim();
     const qty = String(item.quantity || '1');
     const unit = String(item.unitAmount || '0.00');
-    const amt = calculateItemTotal(qty, unit);
     const quote = item.sourceQuote ? String(item.sourceQuote).trim() : null;
 
+    // Defensive check: if item is unpriced or unit is 0 without a quoted monetary rate
+    const isUnpriced =
+      parseFloat(unit) === 0 ||
+      (quote && /rate to be negotiated|to be negotiated|tbd|pending scope/i.test(quote));
+
+    if (isUnpriced) {
+      let startOffset: number | null = null;
+      let endOffset: number | null = null;
+      if (quote) {
+        const pos = rawBrief.indexOf(quote);
+        if (pos !== -1) {
+          startOffset = pos;
+          endOffset = pos + quote.length;
+        }
+      }
+      unpricedScopeItems.push({
+        id: `scope-${unpricedScopeItems.length + 1}`,
+        description: desc,
+        sourceQuote: quote || desc,
+        startOffset,
+        endOffset,
+        reason: 'Rate to be negotiated based on scope',
+        status: 'PENDING_CLARIFICATION',
+        evidenceStatus: 'AMBIGUOUS',
+      });
+      ambiguities.push(`Unpriced scope item requiring rate clarification: "${desc}"`);
+      continue;
+    }
+
+    const amt = calculateItemTotal(qty, unit);
     let startOffset: number | undefined = undefined;
     let endOffset: number | undefined = undefined;
     if (quote) {
@@ -479,7 +621,7 @@ Return a JSON object conforming strictly to this format:
       }
     }
 
-    return {
+    lineItems.push({
       description: desc,
       quantity: qty,
       unitAmount: unit,
@@ -487,8 +629,8 @@ Return a JSON object conforming strictly to this format:
       sourceQuote: quote,
       startOffset,
       endOffset,
-    };
-  });
+    });
+  }
 
   const evidence: SourceEvidence[] = lineItems
     .filter((i) => i.sourceQuote)
@@ -534,6 +676,7 @@ Return a JSON object conforming strictly to this format:
     clientEmail: rawJson.clientEmail,
     currency: rawJson.currency || 'USD',
     lineItems,
+    unpricedScopeItems,
     statedProjectTotal: rawJson.statedProjectTotal,
     dueDate: rawJson.dueDate,
     evidence,
@@ -549,6 +692,7 @@ Return a JSON object conforming strictly to this format:
     clientEmail: rawJson.clientEmail || null,
     currency: rawJson.currency || 'USD',
     lineItems,
+    unpricedScopeItems,
     statedProjectTotal: rawJson.statedProjectTotal || null,
     calculatedTotal: calculatedSubtotal,
     dueDate: rawJson.dueDate || null,
@@ -564,7 +708,7 @@ Return a JSON object conforming strictly to this format:
       },
     },
     missingFields,
-    ambiguities: [],
+    ambiguities,
     consistencyChecks: checks,
     evidence: validatedEvidence,
     rawBrief,

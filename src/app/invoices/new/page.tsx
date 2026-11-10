@@ -21,7 +21,7 @@ import {
   Edit3,
   Eye,
 } from 'lucide-react';
-import { LineItem, AIExtractionOutput, SourceEvidence, EvidenceStatus } from '@/lib/types';
+import { LineItem, UnpricedScopeItem, AIExtractionOutput, SourceEvidence, EvidenceStatus } from '@/lib/types';
 import {
   calculateItemTotal,
   calculateSubtotal,
@@ -719,6 +719,20 @@ export default function NewInvoicePage() {
                   </div>
                 )}
 
+                {/* Scope Ambiguity Alert Banner */}
+                {extractionResult?.unpricedScopeItems && extractionResult.unpricedScopeItems.length > 0 && (
+                  <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-200 text-xs space-y-1.5">
+                    <div className="flex items-center gap-2 font-bold text-purple-300">
+                      <AlertCircle className="w-4 h-4 text-purple-400 shrink-0" />
+                      <span>Scope Ambiguity Detected — {extractionResult.unpricedScopeItems.length} Unpriced Deliverable(s) Found</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-slate-300">
+                      The agreement lists deliverables without agreed monetary pricing (e.g. revision rounds or unpriced setup tasks).
+                      These are preserved as unpriced scope items and <strong className="text-purple-200">excluded from the invoice subtotal</strong> pending client clarification.
+                    </p>
+                  </div>
+                )}
+
                 {/* Arithmetic Match Notification */}
                 {!isMismatch && statedTotal && (
                   <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
@@ -967,6 +981,96 @@ export default function NewInvoicePage() {
                     })
                   )}
                 </div>
+
+                {/* Unpriced Scope Items (Pending Clarification) */}
+                {extractionResult?.unpricedScopeItems && extractionResult.unpricedScopeItems.length > 0 && (
+                  <div className="mt-4 p-4 rounded-xl bg-purple-950/30 border border-purple-500/30 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-purple-400" />
+                        <span className="text-xs font-bold text-purple-200 uppercase tracking-wider font-mono">
+                          Unpriced Scope Items (Pending Clarification) ({extractionResult.unpricedScopeItems.length})
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded border border-purple-500/30">
+                        Excluded from Subtotal
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      These deliverables were found in the brief without an agreed monetary fee. They are preserved for scope auditability and will not be billed until pricing is negotiated.
+                    </p>
+
+                    <div className="space-y-2">
+                      {extractionResult.unpricedScopeItems.map((scopeItem, idx) => {
+                        const evIdx = extractionResult.evidence.findIndex(
+                          (e) =>
+                            e.fieldReference === `unpricedScopeItems[${idx}].description` ||
+                            e.sourceQuote === scopeItem.sourceQuote
+                        );
+
+                        return (
+                          <div
+                            key={scopeItem.id || idx}
+                            className="p-3 rounded-lg bg-midnight-950 border border-purple-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                          >
+                            <div className="space-y-1 flex-1">
+                              <div className="font-medium text-slate-200">
+                                {scopeItem.description}
+                              </div>
+                              {scopeItem.reason && (
+                                <div className="text-[10px] text-amber-300/90 font-mono">
+                                  • {scopeItem.reason}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {scopeItem.sourceQuote && evIdx !== -1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectEvidence(evIdx)}
+                                  className="text-[10px] font-mono text-cyan-400 hover:text-cyan-300 flex items-center gap-1 px-2 py-1 rounded bg-cyan-950/40 border border-cyan-500/30 transition-colors"
+                                  title="Locate quote in original brief"
+                                >
+                                  <Search className="w-3 h-3" />
+                                  <span>View Source</span>
+                                </button>
+                              )}
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                PENDING CLARIFICATION
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUserEdited(true);
+                                  const convertedItem: LineItem = {
+                                    description: scopeItem.description,
+                                    quantity: '1',
+                                    unitAmount: '100.00',
+                                    amount: '100.00',
+                                    sourceQuote: scopeItem.sourceQuote,
+                                    startOffset: scopeItem.startOffset,
+                                    endOffset: scopeItem.endOffset,
+                                    evidenceStatus: 'AMBIGUOUS',
+                                  };
+                                  setLineItems([...lineItems, convertedItem]);
+                                  setExtractionResult({
+                                    ...extractionResult,
+                                    unpricedScopeItems: extractionResult.unpricedScopeItems.filter((_, i) => i !== idx),
+                                  });
+                                }}
+                                className="text-[10px] font-mono text-slate-300 hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+                                title="Add as a priced line item"
+                              >
+                                + Add as Priced Item
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Total Summary & Approval Gates */}

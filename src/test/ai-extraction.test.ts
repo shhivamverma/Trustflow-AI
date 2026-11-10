@@ -83,5 +83,95 @@ Also including cloud deployment $150.
     expect(status.status).toBe('AUTH_ERROR');
     expect(status.configured).toBe(true);
   });
+
+  describe('Ambiguous Scope & Unpriced Deliverables Preservation (User Scenario)', () => {
+    const ambiguousBrief = `Freelance Web Application Contract
+Client: Stellar Media Labs
+Billing Contact: accounts@stellarmedia.com
+Project Reference: Interactive 3D Platform Prototype
+
+Agreed deliverables:
+- UI Concept & Wireframing: $800.00
+- Custom WebGL & 3D Shaders: $1,200.00
+- Additional client revision rounds (rate to be negotiated based on scope)
+- Performance profiling and cloud hosting setup
+
+Total project fee: $2,000.00`;
+
+    it('extracts priced items into lineItems while preserving unpriced deliverables as pending clarification', () => {
+      const result = extractWithDeterministicEngine(ambiguousBrief);
+      const parsed = AIExtractionOutputSchema.safeParse(result);
+
+      expect(parsed.success).toBe(true);
+
+      // 1. Priced line items
+      expect(result.lineItems.length).toBe(2);
+      expect(result.lineItems[0].description).toBe('UI Concept & Wireframing');
+      expect(result.lineItems[0].amount).toBe('800.00');
+      expect(result.lineItems[0].evidenceStatus).toBe('VERIFIED');
+
+      expect(result.lineItems[1].description).toBe('Custom WebGL & 3D Shaders');
+      expect(result.lineItems[1].amount).toBe('1200.00');
+      expect(result.lineItems[1].evidenceStatus).toBe('VERIFIED');
+
+      // 2. Subtotal and stated fee (Unpriced items are strictly excluded from subtotal)
+      expect(result.calculatedTotal).toBe('2000.00');
+      expect(result.statedProjectTotal).toBe('2000.00');
+
+      // 3. Unpriced deliverables preserved
+      expect(result.unpricedScopeItems.length).toBe(2);
+
+      const scope1 = result.unpricedScopeItems[0];
+      expect(scope1.description).toBe('Additional client revision rounds (rate to be negotiated based on scope)');
+      expect(scope1.sourceQuote).toBe('- Additional client revision rounds (rate to be negotiated based on scope)');
+      expect(scope1.reason).toContain('negotiated');
+      expect(scope1.status).toBe('PENDING_CLARIFICATION');
+      expect(scope1.evidenceStatus).toBe('AMBIGUOUS');
+      expect(scope1.startOffset).not.toBeNull();
+      expect(scope1.endOffset).not.toBeNull();
+      expect(ambiguousBrief.substring(scope1.startOffset!, scope1.endOffset!)).toBe(scope1.sourceQuote);
+
+      const scope2 = result.unpricedScopeItems[1];
+      expect(scope2.description).toBe('Performance profiling and cloud hosting setup');
+      expect(scope2.sourceQuote).toBe('- Performance profiling and cloud hosting setup');
+      expect(scope2.status).toBe('PENDING_CLARIFICATION');
+      expect(scope2.evidenceStatus).toBe('AMBIGUOUS');
+      expect(scope2.startOffset).not.toBeNull();
+      expect(scope2.endOffset).not.toBeNull();
+      expect(ambiguousBrief.substring(scope2.startOffset!, scope2.endOffset!)).toBe(scope2.sourceQuote);
+    });
+
+    it('never marks unpriced deliverables as VERIFIED in evidence', () => {
+      const result = extractWithDeterministicEngine(ambiguousBrief);
+
+      const unpricedEvidence = result.evidence.filter((e) =>
+        e.fieldReference.startsWith('unpricedScopeItems')
+      );
+      expect(unpricedEvidence.length).toBe(2);
+
+      for (const ev of unpricedEvidence) {
+        expect(ev.status).toBe('AMBIGUOUS');
+        expect(ev.verified).toBe(false); // Unsupported amounts must never receive VERIFIED
+        expect(ev.quotedAmount).toBeNull();
+        expect(ambiguousBrief).toContain(ev.sourceQuote);
+      }
+    });
+
+    it('flags scope ambiguity check and records missing pricing in ambiguities array', () => {
+      const result = extractWithDeterministicEngine(ambiguousBrief);
+
+      const ambiguityCheck = result.consistencyChecks.find(
+        (c) => c.type === 'AMBIGUITY' && c.field === 'unpricedScopeItems'
+      );
+      expect(ambiguityCheck).toBeDefined();
+      expect(ambiguityCheck?.severity).toBe('WARNING');
+      expect(ambiguityCheck?.message).toContain('2 unpriced scope item(s)');
+      expect(ambiguityCheck?.message).toContain('Excluded from invoice subtotal');
+
+      expect(result.ambiguities.length).toBeGreaterThanOrEqual(2);
+      expect(result.ambiguities.some((a) => a.includes('Additional client revision rounds'))).toBe(true);
+      expect(result.ambiguities.some((a) => a.includes('Performance profiling'))).toBe(true);
+    });
+  });
 });
 

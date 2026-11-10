@@ -1,4 +1,4 @@
-import { LineItem, ConsistencyCheck, SourceEvidence, EvidenceStatus } from './types';
+import { LineItem, UnpricedScopeItem, ConsistencyCheck, SourceEvidence, EvidenceStatus } from './types';
 
 /**
  * Converts a decimal string or number to integer cents to guarantee precision
@@ -444,6 +444,7 @@ export function runBillingIntelligenceChecks(params: {
   clientEmail?: string | null;
   currency: string;
   lineItems: LineItem[];
+  unpricedScopeItems?: UnpricedScopeItem[];
   statedProjectTotal?: string | null;
   dueDate?: string | null;
   evidence: SourceEvidence[];
@@ -453,7 +454,17 @@ export function runBillingIntelligenceChecks(params: {
   calculatedSubtotal: string;
   hasBlockingErrors: boolean;
 } {
-  const { rawBrief, clientName, clientEmail, currency, lineItems, statedProjectTotal, dueDate, evidence } = params;
+  const {
+    rawBrief,
+    clientName,
+    clientEmail,
+    currency,
+    lineItems,
+    unpricedScopeItems = [],
+    statedProjectTotal,
+    dueDate,
+    evidence,
+  } = params;
   const checks: ConsistencyCheck[] = [];
 
   // 1. Calculate deterministic line-item total
@@ -602,6 +613,55 @@ export function runBillingIntelligenceChecks(params: {
         field: `lineItems[${i}].description`,
       });
     }
+  }
+
+  // 6. Verify Unpriced Scope Items evidence (preserves verbatim quotes with AMBIGUOUS status, never VERIFIED)
+  if (unpricedScopeItems && unpricedScopeItems.length > 0) {
+    for (let i = 0; i < unpricedScopeItems.length; i++) {
+      const scopeItem = unpricedScopeItems[i];
+      const quote = scopeItem.sourceQuote?.trim() || '';
+      const match = verifyQuoteInSource(quote, rawBrief, scopeItem.startOffset, scopeItem.endOffset);
+
+      if (match.verified && match.startOffset !== null && match.endOffset !== null) {
+        scopeItem.startOffset = match.startOffset;
+        scopeItem.endOffset = match.endOffset;
+        scopeItem.evidenceStatus = 'AMBIGUOUS';
+
+        validatedEvidence.push({
+          fieldReference: `unpricedScopeItems[${i}].description`,
+          sourceQuote: rawBrief.substring(match.startOffset, match.endOffset),
+          startOffset: match.startOffset,
+          endOffset: match.endOffset,
+          status: 'AMBIGUOUS',
+          verified: false,
+          quotedAmount: null,
+          message: scopeItem.reason || 'Unpriced scope item pending rate agreement. Excluded from invoice subtotal.',
+        });
+      } else {
+        scopeItem.evidenceStatus = 'NOT FOUND';
+        validatedEvidence.push({
+          fieldReference: `unpricedScopeItems[${i}].description`,
+          sourceQuote: quote,
+          startOffset: null,
+          endOffset: null,
+          status: 'NOT FOUND',
+          verified: false,
+          quotedAmount: null,
+          message: 'Unpriced scope item quote could not be located in brief.',
+        });
+      }
+    }
+
+    checks.push({
+      type: 'AMBIGUITY',
+      severity: 'WARNING',
+      message: `Found ${unpricedScopeItems.length} unpriced scope item(s) in project brief requiring rate clarification: ${unpricedScopeItems.map((s) => `"${s.description}"`).join(', ')}. Excluded from invoice subtotal pending rate agreement.`,
+      field: 'unpricedScopeItems',
+      details: {
+        count: unpricedScopeItems.length,
+        items: unpricedScopeItems.map((s) => s.description),
+      },
+    });
   }
 
   // Also verify stated total evidence if present

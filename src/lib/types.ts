@@ -20,6 +20,19 @@ export const LineItemSchema = z.object({
 
 export type LineItem = z.infer<typeof LineItemSchema>;
 
+export const UnpricedScopeItemSchema = z.object({
+  id: z.string().optional(),
+  description: z.string().min(1, 'Description is required'),
+  sourceQuote: z.string(),
+  startOffset: z.number().nullable().optional(),
+  endOffset: z.number().nullable().optional(),
+  reason: z.string().optional(),
+  status: z.enum(['PENDING_CLARIFICATION', 'UNPRICED_SCOPE']).default('PENDING_CLARIFICATION'),
+  evidenceStatus: z.enum(['VERIFIED', 'AMBIGUOUS', 'NOT FOUND', 'MISMATCH']).default('AMBIGUOUS'),
+});
+
+export type UnpricedScopeItem = z.infer<typeof UnpricedScopeItemSchema>;
+
 /* -------------------------------------------------------------------------- */
 /* AI Extraction Schema & Billing Intelligence Types                          */
 /* -------------------------------------------------------------------------- */
@@ -53,6 +66,7 @@ export const AIExtractionOutputSchema = z.object({
   clientEmail: z.string().nullable(),
   currency: z.string().default('USD'),
   lineItems: z.array(LineItemSchema),
+  unpricedScopeItems: z.array(UnpricedScopeItemSchema).default([]),
   statedProjectTotal: z.string().nullable(),
   calculatedTotal: z.string(),
   dueDate: z.string().nullable(), // YYYY-MM-DD
