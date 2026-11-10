@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState, useEffect, Suspense } from 'react';
+import React, { useRef, useState, useEffect, Suspense, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
@@ -8,70 +8,263 @@ import { HeroFallback } from './hero-fallback';
 import { CheckCircle2, ShieldCheck, Cpu, ArrowRight } from 'lucide-react';
 
 /* -------------------------------------------------------------------------- */
-/* 3D Scene Components (Pure WebGL - Zero nested DOM roots)                   */
+/* 3D PayPal Payment Core & Holographic Rings                                 */
 /* -------------------------------------------------------------------------- */
 
-function CentralCore() {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const outerWireRef = useRef<THREE.Mesh>(null);
+interface PayPalPaymentCoreProps {
+  isPulsing?: boolean;
+}
 
-  useFrame((_, delta) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.x += delta * 0.25;
-      meshRef.current.rotation.y += delta * 0.35;
+function PayPalPaymentCore({ isPulsing = false }: PayPalPaymentCoreProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const ring1Ref = useRef<THREE.Mesh>(null);
+  const ring2Ref = useRef<THREE.Mesh>(null);
+  const pulseRingRef = useRef<THREE.Mesh>(null);
+  const badgeMeshRef = useRef<THREE.Mesh>(null);
+
+  // Load the authentic PayPal 3D core transparent texture
+  const texture = useMemo(() => {
+    const loader = new THREE.TextureLoader();
+    const tex = loader.load('/images/paypal-core-transparent.png');
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, []);
+
+  useFrame((state, delta) => {
+    const t = state.clock.getElapsedTime();
+
+    // Gentle floating bob for the main PayPal core (always mostly front-facing)
+    if (groupRef.current) {
+      groupRef.current.position.y = Math.sin(t * 1.4) * 0.08;
+      // Very subtle idle breathing tilt (never spins away or tumbles)
+      groupRef.current.rotation.y = Math.sin(t * 0.8) * 0.06;
+      groupRef.current.rotation.x = Math.cos(t * 0.9) * 0.04;
     }
-    if (outerWireRef.current) {
-      outerWireRef.current.rotation.x -= delta * 0.15;
-      outerWireRef.current.rotation.y -= delta * 0.2;
+
+    // Outer and Inner Holographic Rings rotate continuously
+    if (ring1Ref.current) {
+      ring1Ref.current.rotation.z += delta * 0.35;
+      ring1Ref.current.rotation.x += delta * 0.2;
+    }
+    if (ring2Ref.current) {
+      ring2Ref.current.rotation.z -= delta * 0.45;
+      ring2Ref.current.rotation.y += delta * 0.25;
+    }
+
+    // Expanding Payment Confirmation Pulse Shockwave
+    if (pulseRingRef.current) {
+      const pulseSpeed = isPulsing ? 3.0 : 1.2;
+      const pulseCycle = (t * pulseSpeed) % 2.5;
+      const scale = 1.0 + pulseCycle * 0.8;
+      pulseRingRef.current.scale.set(scale, scale, 1);
+      const mat = pulseRingRef.current.material as THREE.MeshBasicMaterial;
+      if (mat) {
+        mat.opacity = Math.max(0, 0.8 - pulseCycle * 0.35);
+      }
     }
   });
 
   return (
-    <group position={[0, 0, 0]}>
-      {/* Inner Glowing Crystal Core */}
-      <mesh ref={meshRef}>
-        <octahedronGeometry args={[1.35, 1]} />
+    <group ref={groupRef} position={[0, 0, 0]}>
+      {/* 1. Beveled Glass Backdrop Slab (matching user reference image) */}
+      <mesh position={[0, 0, -0.08]}>
+        <boxGeometry args={[2.45, 2.15, 0.22]} />
         <meshPhysicalMaterial
-          color="#00E5FF"
-          emissive="#0055ff"
-          emissiveIntensity={0.6}
-          roughness={0.15}
-          metalness={0.8}
-          transmission={0.85}
-          thickness={1.2}
+          color="#001844"
+          emissive="#003087"
+          emissiveIntensity={0.5}
+          roughness={0.12}
+          metalness={0.2}
+          transmission={0.88}
+          thickness={0.9}
           transparent
-          opacity={0.92}
+          opacity={0.88}
         />
       </mesh>
 
-      {/* Outer Wireframe Sphere Orbit */}
-      <mesh ref={outerWireRef}>
-        <icosahedronGeometry args={[1.9, 1]} />
+      {/* 2. Glass Rim Glow Outline */}
+      <mesh position={[0, 0, -0.06]}>
+        <boxGeometry args={[2.5, 2.2, 0.24]} />
         <meshStandardMaterial
-          color="#38BDF8"
-          emissive="#00E5FF"
-          emissiveIntensity={0.4}
+          color="#00E5FF"
+          emissive="#0066FF"
+          emissiveIntensity={0.6}
           wireframe
           transparent
           opacity={0.35}
         />
       </mesh>
 
-      {/* Central Luminous Point Lights */}
-      <pointLight color="#00E5FF" intensity={3.5} distance={7} />
-      <pointLight color="#0066FF" intensity={2.0} distance={9} position={[0, -1, 1]} />
+      {/* 3. Authentic 3D Embossed PayPal Logo Badge */}
+      <mesh ref={badgeMeshRef} position={[0, 0, 0.05]}>
+        {/* Aspect ratio matches 571 x 495 texture */}
+        <planeGeometry args={[2.42, 2.1]} />
+        <meshStandardMaterial
+          map={texture}
+          transparent
+          alphaTest={0.02}
+          roughness={0.15}
+          metalness={0.65}
+          emissive="#002b66"
+          emissiveIntensity={0.3}
+        />
+      </mesh>
+
+      {/* 4. Concentric Holographic Orbital Rings */}
+      <mesh ref={ring1Ref} position={[0, 0, 0]} rotation={[0.7, 0.4, 0]}>
+        <torusGeometry args={[1.85, 0.016, 16, 80]} />
+        <meshStandardMaterial
+          color="#00E5FF"
+          emissive="#00E5FF"
+          emissiveIntensity={0.9}
+          transparent
+          opacity={0.7}
+        />
+      </mesh>
+
+      <mesh ref={ring2Ref} position={[0, 0, 0]} rotation={[-0.5, 0.7, 0]}>
+        <torusGeometry args={[2.1, 0.014, 16, 80]} />
+        <meshStandardMaterial
+          color="#0079C1"
+          emissive="#0066FF"
+          emissiveIntensity={0.8}
+          transparent
+          opacity={0.55}
+        />
+      </mesh>
+
+      {/* 5. Payment Confirmation Pulse Shockwave Ring */}
+      <mesh ref={pulseRingRef} position={[0, 0, -0.02]}>
+        <ringGeometry args={[1.35, 1.42, 64]} />
+        <meshBasicMaterial
+          color="#00E5FF"
+          transparent
+          opacity={0.6}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {/* 6. Point Lights for rich blue/cyan specular highlights */}
+      <pointLight color="#00E5FF" intensity={3.0} distance={6} position={[0, 0, 1.2]} />
+      <pointLight color="#003087" intensity={2.5} distance={7} position={[0, -1, -0.8]} />
+      <pointLight color="#ffffff" intensity={1.5} distance={5} position={[1, 1, 1]} />
     </group>
   );
 }
 
-/**
- * 3D Holographic Milestone Nodes positioned in WebGL space
- * These mark the 3 stages (Brief, AI Verify, PayPal) directly in the 3D scene
- */
+/* -------------------------------------------------------------------------- */
+/* 3D Pipeline Data Stream (Brief -> AI Verify -> PayPal Core)                */
+/* -------------------------------------------------------------------------- */
+
+function PipelineDataStream() {
+  const streamPointsRef = useRef<THREE.Points>(null);
+  const particleCount = 48;
+
+  // Build curved Bézier path: Brief [-2.6, 1.0, 0.4] -> AI [2.5, 1.2, -0.2] -> PayPal Core [0, 0, 0]
+  const { curve, progressArray } = useMemo(() => {
+    const p0 = new THREE.Vector3(-2.6, 1.0, 0.4);   // Stage 1: Brief
+    const p1 = new THREE.Vector3(-0.5, 1.8, 0.6);   // Control 1
+    const p2 = new THREE.Vector3(2.5, 1.2, -0.2);   // Stage 2: AI Verification
+    const p3 = new THREE.Vector3(1.2, 0.2, 0.3);    // Control 2
+    const p4 = new THREE.Vector3(0, 0, 0.05);       // Stage 3: PayPal Payment Core
+
+    const curvePath = new THREE.CurvePath<THREE.Vector3>();
+    curvePath.add(new THREE.CubicBezierCurve3(p0, p1, p2, p2));
+    curvePath.add(new THREE.QuadraticBezierCurve3(p2, p3, p4));
+
+    const progress = new Float32Array(particleCount);
+    for (let i = 0; i < particleCount; i++) {
+      progress[i] = i / particleCount;
+    }
+
+    return { curve: curvePath, progressArray: progress };
+  }, []);
+
+  const [positions] = useState(() => new Float32Array(particleCount * 3));
+
+  useFrame((_, delta) => {
+    for (let i = 0; i < particleCount; i++) {
+      progressArray[i] = (progressArray[i] + delta * 0.22) % 1.0;
+      const pt = curve.getPoint(progressArray[i]);
+      if (pt) {
+        positions[i * 3] = pt.x;
+        positions[i * 3 + 1] = pt.y;
+        positions[i * 3 + 2] = pt.z;
+      }
+    }
+
+    if (streamPointsRef.current) {
+      streamPointsRef.current.geometry.attributes.position.needsUpdate = true;
+    }
+  });
+
+  return (
+    <points ref={streamPointsRef}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.09}
+        color="#00E5FF"
+        transparent
+        opacity={0.9}
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Ambient Currency & Star Sparkles                                           */
+/* -------------------------------------------------------------------------- */
+
+function CurrencySparkles() {
+  const pointsRef = useRef<THREE.Points>(null);
+  const count = 90;
+
+  const [positions] = useState(() => {
+    const coords = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 4;
+      const radius = 1.8 + (Math.random() - 0.5) * 1.5;
+      coords[i * 3] = Math.cos(angle) * radius;
+      coords[i * 3 + 1] = (Math.random() - 0.5) * 2.4;
+      coords[i * 3 + 2] = Math.sin(angle) * radius;
+    }
+    return coords;
+  });
+
+  useFrame((_, delta) => {
+    if (pointsRef.current) {
+      pointsRef.current.rotation.y += delta * 0.12;
+      pointsRef.current.rotation.x = Math.sin(pointsRef.current.rotation.y * 0.5) * 0.08;
+    }
+  });
+
+  return (
+    <points ref={pointsRef}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.05}
+        color="#38BDF8"
+        transparent
+        opacity={0.65}
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Holographic Stage Anchor Nodes (WebGL)                                     */
+/* -------------------------------------------------------------------------- */
+
 function HologramNodes() {
   const node1Ref = useRef<THREE.Mesh>(null);
   const node2Ref = useRef<THREE.Mesh>(null);
-  const node3Ref = useRef<THREE.Mesh>(null);
 
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
@@ -82,10 +275,6 @@ function HologramNodes() {
     if (node2Ref.current) {
       node2Ref.current.rotation.y = -t * 0.6;
       node2Ref.current.position.y = 1.2 + Math.cos(t * 1.7) * 0.08;
-    }
-    if (node3Ref.current) {
-      node3Ref.current.rotation.y = t * 0.4;
-      node3Ref.current.position.y = -1.1 + Math.sin(t * 1.3) * 0.08;
     }
   });
 
@@ -102,56 +291,21 @@ function HologramNodes() {
         <octahedronGeometry args={[0.32, 0]} />
         <meshStandardMaterial color="#38BDF8" emissive="#0066FF" emissiveIntensity={0.9} wireframe />
       </mesh>
-
-      {/* Node 3: PayPal Settlement Anchor (Bottom Right) */}
-      <mesh ref={node3Ref} position={[2.3, -1.1, 0.4]}>
-        <dodecahedronGeometry args={[0.34, 0]} />
-        <meshStandardMaterial color="#10B981" emissive="#059669" emissiveIntensity={0.8} wireframe />
-      </mesh>
     </group>
   );
 }
 
-function DataParticleFlow() {
-  const pointsRef = useRef<THREE.Points>(null);
-  const particleCount = 180;
+/* -------------------------------------------------------------------------- */
+/* Main Scene Container with Parallax                                         */
+/* -------------------------------------------------------------------------- */
 
-  const [positions] = useState(() => {
-    const coords = new Float32Array(particleCount * 3);
-    for (let i = 0; i < particleCount; i++) {
-      const angle = (i / particleCount) * Math.PI * 4;
-      const radius = 2.2 + (Math.random() - 0.5) * 1.6;
-      coords[i * 3] = Math.cos(angle) * radius;
-      coords[i * 3 + 1] = (Math.random() - 0.5) * 2.2;
-      coords[i * 3 + 2] = Math.sin(angle) * radius;
-    }
-    return coords;
-  });
-
-  useFrame((_, delta) => {
-    if (pointsRef.current) {
-      pointsRef.current.rotation.y += delta * 0.18;
-      pointsRef.current.rotation.x = Math.sin(pointsRef.current.rotation.y * 0.5) * 0.1;
-    }
-  });
-
-  return (
-    <points ref={pointsRef}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-      </bufferGeometry>
-      <pointsMaterial
-        size={0.06}
-        color="#00E5FF"
-        transparent
-        opacity={0.7}
-        blending={THREE.AdditiveBlending}
-      />
-    </points>
-  );
-}
-
-function SceneContainer({ mousePos }: { mousePos: { x: number; y: number } }) {
+function SceneContainer({
+  mousePos,
+  isPulsing,
+}: {
+  mousePos: { x: number; y: number };
+  isPulsing: boolean;
+}) {
   const groupRef = useRef<THREE.Group>(null);
 
   useFrame(() => {
@@ -159,12 +313,12 @@ function SceneContainer({ mousePos }: { mousePos: { x: number; y: number } }) {
       // Gentle parallax follow
       groupRef.current.rotation.y = THREE.MathUtils.lerp(
         groupRef.current.rotation.y,
-        mousePos.x * 0.25,
+        mousePos.x * 0.22,
         0.05
       );
       groupRef.current.rotation.x = THREE.MathUtils.lerp(
         groupRef.current.rotation.x,
-        -mousePos.y * 0.15,
+        -mousePos.y * 0.12,
         0.05
       );
     }
@@ -172,15 +326,16 @@ function SceneContainer({ mousePos }: { mousePos: { x: number; y: number } }) {
 
   return (
     <group ref={groupRef}>
-      <CentralCore />
+      <PayPalPaymentCore isPulsing={isPulsing} />
       <HologramNodes />
-      <DataParticleFlow />
+      <PipelineDataStream />
+      <CurrencySparkles />
     </group>
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/* Main Exported Hero 3D Component with Robust HTML Layer & Accessibility     */
+/* Main Exported Hero 3D Component                                            */
 /* -------------------------------------------------------------------------- */
 
 interface Hero3DProps {
@@ -193,23 +348,20 @@ export function Hero3D({ onCtaClick }: Hero3DProps) {
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [isPulsing, setIsPulsing] = useState(false);
 
   useEffect(() => {
     setMounted(true);
 
-    // Check reduced motion preference safely
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     setPrefersReducedMotion(motionQuery.matches);
     const motionListener = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches);
     motionQuery.addEventListener('change', motionListener);
 
-    // Check WebGL availability safely
     try {
       const canvas = document.createElement('canvas');
       const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (!gl) {
-        setHasWebGL(false);
-      }
+      if (!gl) setHasWebGL(false);
     } catch {
       setHasWebGL(false);
     }
@@ -226,59 +378,65 @@ export function Hero3D({ onCtaClick }: Hero3DProps) {
     setMousePos({ x, y });
   };
 
+  const handleTriggerPulse = () => {
+    setIsPulsing(true);
+    setTimeout(() => setIsPulsing(false), 2000);
+    if (onCtaClick) onCtaClick();
+  };
+
   if (!mounted) {
     return <HeroFallback onCtaClick={onCtaClick} />;
   }
 
-  // Graceful fallback if reduced motion is requested, WebGL unsupported, or 3D failed
   if (prefersReducedMotion || !hasWebGL || hasError) {
     return <HeroFallback onCtaClick={onCtaClick} />;
   }
 
-  // Calculate 3D perspective tilt for HTML floating cards synchronized with Three.js
+  // 3D perspective tilt for HTML floating cards
   const cardTiltX = -mousePos.y * 12;
   const cardTiltY = mousePos.x * 12;
 
   return (
     <div
       onMouseMove={handleMouseMove}
-      className="relative w-full h-[480px] md:h-[560px] rounded-3xl overflow-hidden glass-panel-elevated border border-cyan-500/20 select-none"
-      aria-label="Interactive 3D TrustFlow Billing Flow Visualization"
+      onClick={handleTriggerPulse}
+      className="relative w-full h-[480px] md:h-[560px] rounded-3xl overflow-hidden glass-panel-elevated border border-cyan-500/25 select-none cursor-pointer"
+      aria-label="Interactive 3D TrustFlow PayPal Invoicing Flow"
       style={{ perspective: '1200px' }}
+      title="Click anywhere to trigger visual PayPal payment confirmation pulse"
     >
-      {/* Background ambient radial gradients */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-cyan-950/25 via-slate-950/85 to-midnight-950 pointer-events-none" />
+      {/* Background ambient radial glow */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-blue-950/35 via-slate-950/85 to-midnight-950 pointer-events-none" />
 
       {/* Top Banner / Pipeline Label */}
       <div className="absolute top-4 left-6 right-6 z-20 flex items-center justify-between text-xs text-slate-400 font-mono pointer-events-none">
         <span className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-          TRUSTFLOW 3D EXPERIENCE: BRIEF → VERIFY → INVOICE → SETTLE
+          TRUSTFLOW 3D CORE: BRIEF &rarr; AI VERIFY &rarr; PAYPAL SETTLE
         </span>
-        <span className="bg-cyan-950/60 text-cyan-300 border border-cyan-800/60 px-2 py-0.5 rounded text-[11px] backdrop-blur-md">
-          INTERACTIVE 3D
+        <span className="bg-blue-950/70 text-cyan-300 border border-blue-500/40 px-2.5 py-0.5 rounded text-[11px] backdrop-blur-md font-mono">
+          PAYPAL INVOICING v2
         </span>
       </div>
 
-      {/* Three.js Canvas (Pure WebGL - zero nested DOM roots) */}
+      {/* Three.js Canvas */}
       <Canvas
         className="w-full h-full cursor-grab active:cursor-grabbing"
         gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
         onError={() => setHasError(true)}
       >
         <PerspectiveCamera makeDefault position={[0, 0, 7.5]} fov={45} />
-        <ambientLight intensity={0.7} />
-        <directionalLight position={[5, 6, 5]} intensity={1.2} color="#ffffff" />
-        <directionalLight position={[-5, -4, -2]} intensity={0.8} color="#00E5FF" />
+        <ambientLight intensity={0.8} />
+        <directionalLight position={[5, 6, 5]} intensity={1.3} color="#ffffff" />
+        <directionalLight position={[-5, -4, -2]} intensity={0.9} color="#00E5FF" />
 
         <Suspense fallback={null}>
-          <SceneContainer mousePos={mousePos} />
+          <SceneContainer mousePos={mousePos} isPulsing={isPulsing} />
         </Suspense>
       </Canvas>
 
       {/* ---------------------------------------------------------------------- */}
-      {/* Floating Hologram Cards Layer (Synchronized CSS 3D Transforms)          */}
-      {/* Rendered in primary React root — completely immune to unmount bugs     */}
+      {/* Floating Holographic Cards Layer                                       */}
       {/* ---------------------------------------------------------------------- */}
       <div className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-between p-6 sm:p-10">
         <div className="relative w-full h-full">
@@ -354,7 +512,7 @@ export function Hero3D({ onCtaClick }: Hero3DProps) {
         </div>
       </div>
 
-      {/* Bottom status bar & CTAs */}
+      {/* Bottom Status Bar & Action */}
       <div className="absolute bottom-4 left-6 right-6 z-20 flex flex-wrap items-center justify-between gap-3 text-xs pointer-events-none">
         <div className="flex items-center gap-4 bg-midnight-950/80 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-white/10 text-slate-300">
           <span className="inline-flex items-center gap-1.5">
@@ -371,15 +529,16 @@ export function Hero3D({ onCtaClick }: Hero3DProps) {
           </span>
         </div>
 
-        {onCtaClick && (
-          <button
-            onClick={onCtaClick}
-            className="pointer-events-auto inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs shadow-lg shadow-cyan-500/20 transition-all hover:scale-105"
-          >
-            Create Invoice From Brief
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        )}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleTriggerPulse();
+          }}
+          className="pointer-events-auto inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-500/20 transition-all hover:scale-105 active:scale-95"
+        >
+          <span>Trigger Payment Pulse</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </button>
       </div>
     </div>
   );
