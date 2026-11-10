@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { Navbar } from '@/components/navbar';
 import { Hero3D } from '@/components/hero-3d';
+import { StorytellingHero } from '@/components/storytelling-hero';
 import {
   FileText,
   Cpu,
@@ -14,6 +15,7 @@ import {
   Bell,
   Code,
   Check,
+  Layers,
 } from 'lucide-react';
 
 export default function LandingPage() {
@@ -77,48 +79,35 @@ export default function LandingPage() {
     <div className="min-h-screen flex flex-col bg-[#060A12] selection:bg-cyan-500/30 selection:text-cyan-200">
       <Navbar />
 
-      {/* Hero Section */}
-      <section className="relative pt-20 sm:pt-24 md:pt-28 lg:pt-32 pb-16 md:pb-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
-        <div className="text-center max-w-3xl mx-auto mb-10 pt-2 sm:pt-4">
-          {/* Hackathon Badge */}
-          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full text-xs font-mono bg-cyan-950/70 text-cyan-300 border border-cyan-500/30 mb-6 shadow-sm shadow-cyan-500/10">
-            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            <span>PAYPAL AI HACKATHON PROTOTYPE</span>
+      {/* ------------------------------------------------------------------ */}
+      {/* 1. Cinematic Story-Driven Photographic Slideshow Hero              */}
+      {/* ------------------------------------------------------------------ */}
+      <StorytellingHero />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* 2. Cohesive Transition to 3D PayPal Architecture Engine            */}
+      {/* ------------------------------------------------------------------ */}
+      <section
+        id="pipeline-3d-section"
+        className="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full border-t border-white/5 scroll-mt-20"
+      >
+        <div className="text-center max-w-3xl mx-auto mb-10">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-blue-950/70 text-cyan-300 border border-blue-500/30 mb-4 shadow-sm shadow-cyan-500/10 backdrop-blur-md">
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <span>INTERACTIVE ARCHITECTURE</span>
           </div>
 
-          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white mb-6 leading-[1.18] sm:leading-[1.12]">
-            From Project Brief to <br />
-            <span className="text-gradient-cyan">Verified PayPal Payment</span>
-          </h1>
+          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black text-white tracking-tight mb-4 leading-tight">
+            See the Engine in Motion
+          </h2>
 
-          <p className="text-base sm:text-lg text-slate-300 font-normal leading-relaxed mb-8 max-w-2xl mx-auto">
-            Freelancers lose hours converting messy client messages into invoices and reconciling payments.
-            <strong className="text-white font-medium"> TrustFlow AI</strong> reads your agreement, validates line items
-            against stated fees, drafts PayPal invoices, and tracks payment status — with the human in full control.
+          <p className="text-sm sm:text-base text-slate-300 max-w-2xl mx-auto leading-relaxed">
+            From the scattered client brief on the left, through deterministic AI audit and arithmetic verification, directly into the official PayPal Invoicing v2 core.
           </p>
-
-          {/* Action CTAs */}
-          <div className="flex flex-wrap items-center justify-center gap-4">
-            <Link
-              href="/invoices/new"
-              className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 via-sky-400 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-sm shadow-xl shadow-cyan-500/25 transition-all hover:scale-105 active:scale-95 flex items-center gap-2"
-            >
-              <FileText className="w-4 h-4 stroke-[2.5]" />
-              <span>Paste Brief &amp; Extract Invoice</span>
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-
-            <Link
-              href="/dashboard"
-              className="px-6 py-3.5 rounded-xl glass-panel hover:bg-white/10 text-slate-200 font-semibold text-sm border border-white/15 transition-all hover:scale-105"
-            >
-              Open Dashboard
-            </Link>
-          </div>
         </div>
 
-        {/* Signature 3D Interactive Hero Canvas */}
-        <div className="mt-4">
+        {/* 3D Interactive Hero Canvas */}
+        <div className="mt-2">
           <Hero3D />
         </div>
       </section>

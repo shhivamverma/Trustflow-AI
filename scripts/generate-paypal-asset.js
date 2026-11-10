@@ -81,3 +81,4 @@ sharp(Buffer.from(svg))
   .catch((err) => {
     console.error('Error generating asset:', err);
   });
+
