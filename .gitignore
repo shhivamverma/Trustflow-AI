@@ -37,3 +37,6 @@ Thumbs.db
 # Vitest
 coverage/
 
+.neon
+
+*.tsbuildinfo

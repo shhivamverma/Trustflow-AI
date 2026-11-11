@@ -500,6 +500,12 @@ Return a JSON object conforming strictly to this format:
   for (const model of GEMINI_CANDIDATE_MODELS) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     try {
+      const hasGlobalWindow = typeof window !== 'undefined';
+      let signal: any = undefined;
+      if (!hasGlobalWindow && typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        signal = AbortSignal.timeout(8000);
+      }
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -510,6 +516,7 @@ Return a JSON object conforming strictly to this format:
             temperature: 0.1,
           },
         }),
+        ...(signal ? { signal } : {}),
       });
 
       if (!response.ok) {

@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Persist raw brief in SQLite
+    // Persist raw brief in PostgreSQL database
     const briefRecord = await prisma.projectBrief.create({
       data: {
         rawText: rawBrief,

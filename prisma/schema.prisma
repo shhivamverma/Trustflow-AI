@@ -1,5 +1,12 @@
+// ==============================================================================
+// TrustFlow AI - Production PostgreSQL Prisma Schema
+// Target: PostgreSQL (e.g. Neon Serverless Postgres, Supabase, Vercel Postgres)
+// Usage: npx prisma generate --schema=prisma/schema.postgresql.prisma
+//        npx prisma db push --schema=prisma/schema.postgresql.prisma
+// ==============================================================================
+
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -18,8 +25,8 @@ model WorkspaceSettings {
 
 model ProjectBrief {
   id             String              @id @default(cuid())
-  rawText        String
-  parsedSummary  String?
+  rawText        String              @db.Text
+  parsedSummary  String?             @db.Text
   invoices       Invoice[]
   extractions    InvoiceExtraction[]
   createdAt      DateTime            @default(now())
@@ -36,11 +43,11 @@ model Invoice {
   subtotal         String                 // Decimal as string for precision
   total            String                 // Decimal as string for precision
   dueDate          String?                // YYYY-MM-DD
-  terms            String?
+  terms            String?                @db.Text
   projectRef       String?
   localStatus      String                 @default("DRAFT") // DRAFT, SENT, PAID, PARTIALLY_PAID, OVERDUE, CANCELED, REFUNDED, NEEDS_SYNC
   paypalInvoiceId  String?
-  hostedInvoiceUrl String?
+  hostedInvoiceUrl String?                @db.Text
   lastSyncedAt     DateTime?
   idempotencyKey   String?                @unique
   lineItems        InvoiceLineItem[]
@@ -56,11 +63,11 @@ model InvoiceLineItem {
   id          String   @id @default(cuid())
   invoiceId   String
   invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  description String
+  description String   @db.Text
   quantity    String   @default("1")
   unitAmount  String   // Decimal as string
   amount      String   // Decimal as string (quantity * unitAmount)
-  sourceQuote String?
+  sourceQuote String?  @db.Text
   createdAt   DateTime @default(now())
 }
 
@@ -68,7 +75,7 @@ model InvoiceExtraction {
   id                String        @id @default(cuid())
   briefId           String?
   brief             ProjectBrief? @relation(fields: [briefId], references: [id], onDelete: Cascade)
-  structuredOutput  String        // Stored JSON
+  structuredOutput  String        @db.Text // Stored JSON
   provider          String        // "gemini" or "deterministic-fallback"
   model             String
   validationOutcome String        // "VALID", "WARNINGS", "ERRORS"
@@ -80,7 +87,7 @@ model SourceEvidence {
   invoiceId      String
   invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   fieldReference String   // e.g. "lineItem[0].description", "total", "clientName"
-  sourceQuote    String
+  sourceQuote    String   @db.Text
   startOffset    Int?
   endOffset      Int?
   verified       Boolean  @default(true)
@@ -91,8 +98,8 @@ model InvoiceRevision {
   id           String   @id @default(cuid())
   invoiceId    String
   invoice      Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  beforeValues String   // JSON snapshot
-  afterValues  String   // JSON snapshot
+  beforeValues String   @db.Text // JSON snapshot
+  afterValues  String   @db.Text // JSON snapshot
   actor        String   @default("user") // "user" or "system"
   action       String   // e.g. "USER_EDIT", "APPROVAL", "EXTRACTION_REPLACE"
   createdAt    DateTime @default(now())
@@ -105,7 +112,7 @@ model InvoiceStatusHistory {
   previousStatus String?
   newStatus      String
   source         String   // "sync", "webhook", "manual", "system"
-  reason         String?
+  reason         String?  @db.Text
   createdAt      DateTime @default(now())
 }
 
@@ -123,7 +130,7 @@ model ReminderDraft {
   id        String    @id @default(cuid())
   invoiceId String
   invoice   Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  message   String
+  message   String    @db.Text
   createdAt DateTime  @default(now())
   copiedAt  DateTime?
 }
