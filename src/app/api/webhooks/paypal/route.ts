@@ -1,59 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import crypto from 'crypto';
-import { getPayPalAccessToken, getPayPalBaseUrl, getPayPalInvoiceDetails } from '@/lib/paypal';
-
-/**
- * Validates PayPal webhook signature via official PayPal REST endpoint
- */
-async function verifyPayPalWebhookSignature(req: NextRequest, bodyText: string): Promise<boolean> {
-  const webhookId = process.env.PAYPAL_WEBHOOK_ID?.trim();
-  if (!webhookId) {
-    // If webhook ID is not configured in local dev, allow authenticated local testing
-    return true;
-  }
-
-  const transmissionId = req.headers.get('paypal-transmission-id');
-  const transmissionTime = req.headers.get('paypal-transmission-time');
-  const certUrl = req.headers.get('paypal-cert-url');
-  const authAlgo = req.headers.get('paypal-auth-algo');
-  const transmissionSig = req.headers.get('paypal-transmission-sig');
-
-  if (!transmissionId || !transmissionTime || !certUrl || !authAlgo || !transmissionSig) {
-    return false;
-  }
-
-  try {
-    const token = await getPayPalAccessToken();
-    const baseUrl = getPayPalBaseUrl();
-
-    const verifyPayload = {
-      transmission_id: transmissionId,
-      transmission_time: transmissionTime,
-      cert_url: certUrl,
-      auth_algo: authAlgo,
-      transmission_sig: transmissionSig,
-      webhook_id: webhookId,
-      webhook_event: JSON.parse(bodyText),
-    };
-
-    const res = await fetch(`${baseUrl}/v1/notifications/verify-webhook-signature`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(verifyPayload),
-    });
-
-    if (!res.ok) return false;
-    const data = await res.json();
-    return data.verification_status === 'SUCCESS';
-  } catch (err) {
-    console.error('Webhook verification error:', err);
-    return false;
-  }
-}
+import { getPayPalInvoiceDetails } from '@/lib/paypal';
+import { verifyPayPalWebhookSignature, resolveReconciledStatus } from '@/lib/paypal-webhook';
 
 export async function POST(req: NextRequest) {
   try {
@@ -72,10 +21,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing event ID or event_type' }, { status: 400 });
     }
 
-    // 1. Signature Verification
-    const isValid = await verifyPayPalWebhookSignature(req, bodyText);
+    // 1. Cryptographic Signature Verification via official PayPal API
+    const isValid = await verifyPayPalWebhookSignature(
+      {
+        transmissionId: req.headers.get('paypal-transmission-id'),
+        transmissionTime: req.headers.get('paypal-transmission-time'),
+        certUrl: req.headers.get('paypal-cert-url'),
+        authAlgo: req.headers.get('paypal-auth-algo'),
+        transmissionSig: req.headers.get('paypal-transmission-sig'),
+      },
+      bodyText
+    );
+
     if (!isValid) {
-      console.warn(`Rejected PayPal webhook with invalid signature: ${eventId}`);
+      console.warn(`Rejected PayPal webhook with invalid signature or missing webhook config: ${eventId}`);
       return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 });
     }
 
@@ -123,43 +82,24 @@ export async function POST(req: NextRequest) {
 
     // 3. Fetch latest authoritative invoice from PayPal before reconciling
     // (Page 12: "Do not blindly apply an event as the latest truth. Fetch current invoice from PayPal.")
-    let reconciledStatus = localInvoice.localStatus;
-
+    let remoteStatus: string | null = null;
     try {
       const liveDetails = await getPayPalInvoiceDetails(paypalInvoiceId);
-      const remoteStatus = (liveDetails.status || '').toUpperCase();
-
-      if (remoteStatus === 'PAID') {
-        reconciledStatus = 'PAID';
-      } else if (remoteStatus === 'PARTIALLY_PAID') {
-        reconciledStatus = 'PARTIALLY_PAID';
-      } else if (remoteStatus === 'SENT' || remoteStatus === 'UNPAID') {
-        const nowStr = new Date().toISOString().split('T')[0];
-        if (localInvoice.dueDate && localInvoice.dueDate < nowStr) {
-          reconciledStatus = 'OVERDUE';
-        } else {
-          reconciledStatus = 'SENT';
-        }
-      } else if (remoteStatus === 'CANCELLED' || remoteStatus === 'CANCELED') {
-        reconciledStatus = 'CANCELED';
-      } else if (remoteStatus === 'REFUNDED') {
-        reconciledStatus = 'REFUNDED';
-      }
-    } catch {
-      // If fetching remote fails, infer from eventType safely
-      if (eventType === 'INVOICING.INVOICE.PAID') {
-        reconciledStatus = 'PAID';
-      } else if (eventType === 'INVOICING.INVOICE.CANCELLED') {
-        reconciledStatus = 'CANCELED';
-      } else if (eventType === 'INVOICING.INVOICE.REFUNDED') {
-        reconciledStatus = 'REFUNDED';
-      }
+      remoteStatus = liveDetails.status || null;
+    } catch (fetchErr) {
+      console.warn(
+        `Could not fetch live PayPal status for ${paypalInvoiceId}, falling back to event type ${eventType}:`,
+        fetchErr
+      );
+      remoteStatus = null;
     }
 
-    // SAFEGUARD: Never regress PAID to UNPAID
-    if (localInvoice.localStatus === 'PAID' && reconciledStatus !== 'PAID') {
-      reconciledStatus = 'PAID';
-    }
+    const reconciledStatus = resolveReconciledStatus(
+      localInvoice.localStatus,
+      remoteStatus,
+      eventType,
+      localInvoice.dueDate
+    );
 
     const changed = reconciledStatus !== localInvoice.localStatus;
     if (changed) {
@@ -191,4 +131,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message || 'Webhook processing failed' }, { status: 500 });
   }
 }
-

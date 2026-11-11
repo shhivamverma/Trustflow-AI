@@ -1,18 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getPayPalAccessToken } from '@/lib/paypal';
+import { checkPayPalConnection } from '@/lib/paypal';
 import { checkGeminiConnection } from '@/lib/ai-adapter';
 
 export async function GET() {
   try {
-    const hasPayPalId =
-      !!process.env.PAYPAL_CLIENT_ID &&
-      process.env.PAYPAL_CLIENT_ID.trim().length > 5 &&
-      !process.env.PAYPAL_CLIENT_ID.includes('YOUR_CLIENT_ID');
-    const hasPayPalSecret =
-      !!process.env.PAYPAL_CLIENT_SECRET &&
-      process.env.PAYPAL_CLIENT_SECRET.trim().length > 5 &&
-      !process.env.PAYPAL_CLIENT_SECRET.includes('YOUR_CLIENT_SECRET');
     const hasWebhook =
       !!process.env.PAYPAL_WEBHOOK_ID &&
       process.env.PAYPAL_WEBHOOK_ID.trim().length > 5 &&
@@ -22,7 +14,8 @@ export async function GET() {
       process.env.GEMINI_API_KEY.trim().length > 5 &&
       !process.env.GEMINI_API_KEY.includes('YOUR_GEMINI_API_KEY');
 
-    // Check actual Gemini health/connection status
+    // Check actual PayPal and Gemini health/connection status
+    const paypalStatus = await checkPayPalConnection();
     const geminiStatus = await checkGeminiConnection();
 
     // Get or create workspace settings
@@ -33,17 +26,23 @@ export async function GET() {
           id: 'default-workspace',
           displayName: 'Freelancer Studio',
           defaultCurrency: 'USD',
-          demoMode: !hasPayPalId || !hasPayPalSecret,
+          demoMode: paypalStatus.status !== 'LIVE',
         },
+      });
+    } else if (paypalStatus.status === 'LIVE' && workspace.demoMode) {
+      workspace = await prisma.workspaceSettings.update({
+        where: { id: workspace.id },
+        data: { demoMode: false },
       });
     }
 
     return NextResponse.json({
       workspace,
       envStatus: {
-        paypalConfigured: hasPayPalId && hasPayPalSecret,
-        paypalClientIdMasked: hasPayPalId ? `${process.env.PAYPAL_CLIENT_ID?.slice(0, 8)}...` : null,
-        paypalBaseUrl: process.env.PAYPAL_BASE_URL || 'https://api-m.sandbox.paypal.com',
+        paypalConfigured: paypalStatus.status === 'LIVE',
+        paypalStatus,
+        paypalClientIdMasked: paypalStatus.clientIdMasked,
+        paypalBaseUrl: paypalStatus.baseUrl,
         paypalWebhookConfigured: hasWebhook,
         geminiConfigured: hasGemini,
         geminiStatus,
@@ -58,9 +57,19 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { action, defaultCurrency, displayName } = body;
+    const { action, defaultCurrency, displayName, demoMode } = body;
 
     if (action === 'RESET_DEMO') {
+      if (process.env.NODE_ENV === 'production') {
+        return NextResponse.json(
+          {
+            error: 'Resetting demo data is disabled in production mode.',
+            code: 'RESET_DISABLED_IN_PRODUCTION',
+          },
+          { status: 403 }
+        );
+      }
+
       // Clear database and reseed
       await prisma.invoiceLineItem.deleteMany();
       await prisma.sourceEvidence.deleteMany();
@@ -74,6 +83,16 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'CLEAR_ALL') {
+      if (process.env.NODE_ENV === 'production') {
+        return NextResponse.json(
+          {
+            error: 'Clearing all database records is disabled in production mode.',
+            code: 'CLEAR_ALL_DISABLED_IN_PRODUCTION',
+          },
+          { status: 403 }
+        );
+      }
+
       await prisma.invoiceLineItem.deleteMany();
       await prisma.sourceEvidence.deleteMany();
       await prisma.invoiceRevision.deleteMany();
@@ -86,15 +105,30 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'TEST_PAYPAL') {
-      // Test real PayPal OAuth token retrieval if credentials configured
       try {
-        await getPayPalAccessToken();
-        return NextResponse.json({ success: true, message: 'Successfully authenticated with PayPal Sandbox API.' });
+        const paypalStatus = await checkPayPalConnection(undefined, undefined, true);
+        if (paypalStatus.status === 'LIVE') {
+          return NextResponse.json({
+            success: true,
+            paypalStatus,
+            message: paypalStatus.message,
+          });
+        } else {
+          return NextResponse.json(
+            {
+              success: false,
+              paypalStatus,
+              message: paypalStatus.message,
+              errorDetails: paypalStatus.errorDetails,
+            },
+            { status: 400 }
+          );
+        }
       } catch (err: any) {
         return NextResponse.json(
           {
             success: false,
-            message: `PayPal Sandbox OAuth verification failed: ${err.message}. Deterministic demo mode will be used for continuity.`,
+            message: `PayPal Sandbox OAuth verification failed: ${err.message}.`,
           },
           { status: 400 }
         );
@@ -137,11 +171,13 @@ export async function POST(req: NextRequest) {
       update: {
         defaultCurrency: defaultCurrency || 'USD',
         displayName: displayName || 'Freelancer Studio',
+        ...(typeof demoMode === 'boolean' ? { demoMode } : {}),
       },
       create: {
         id: 'default-workspace',
         defaultCurrency: defaultCurrency || 'USD',
         displayName: displayName || 'Freelancer Studio',
+        demoMode: typeof demoMode === 'boolean' ? demoMode : true,
       },
     });
 

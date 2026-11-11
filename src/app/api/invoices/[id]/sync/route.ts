@@ -31,7 +31,7 @@ export async function POST(
     let mappedStatus = invoice.localStatus;
     const rawStatus = (details.status || '').toUpperCase();
 
-    if (rawStatus === 'PAID') {
+    if (rawStatus === 'PAID' || rawStatus === 'MARKED_AS_PAID') {
       mappedStatus = 'PAID';
     } else if (rawStatus === 'PARTIALLY_PAID') {
       mappedStatus = 'PARTIALLY_PAID';
@@ -84,6 +84,8 @@ export async function POST(
       invoice: updated,
       statusChanged,
       remoteStatus: details.status,
+      remoteAmount: details.totalAmount,
+      currency: details.currency,
       isDemoFallback: details.isDemoFallback,
       message: `Invoice synchronized with PayPal: ${mappedStatus}`,
     });

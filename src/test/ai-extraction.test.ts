@@ -82,7 +82,7 @@ Also including cloud deployment $150.
     const status = await checkGeminiConnection('AIzaSyDummyInvalidKeyForTest987654321', true);
     expect(status.status).toBe('AUTH_ERROR');
     expect(status.configured).toBe(true);
-  });
+  }, 15000);
 
   describe('Ambiguous Scope & Unpriced Deliverables Preservation (User Scenario)', () => {
     const ambiguousBrief = `Freelance Web Application Contract

@@ -27,6 +27,7 @@ export default function SettingsPage() {
   // Form states
   const [displayName, setDisplayName] = useState('');
   const [defaultCurrency, setDefaultCurrency] = useState('USD');
+  const [demoMode, setDemoMode] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export default function SettingsPage() {
       if (json.workspace) {
         setDisplayName(json.workspace.displayName || 'Freelancer Studio');
         setDefaultCurrency(json.workspace.defaultCurrency || 'USD');
+        setDemoMode(json.workspace.demoMode ?? true);
       }
     } catch (err: any) {
       console.error(err);
@@ -60,10 +62,23 @@ export default function SettingsPage() {
         body: JSON.stringify({ action: 'TEST_PAYPAL' }),
       });
       const json = await res.json();
-      if (res.ok) {
+      if (res.ok && json.success) {
         setActionMessage({ text: json.message, type: 'success' });
       } else {
-        setActionMessage({ text: json.message, type: 'error' });
+        setActionMessage({
+          text: json.errorDetails ? `${json.message} — ${json.errorDetails}` : json.message,
+          type: 'error',
+        });
+      }
+      if (json.paypalStatus) {
+        setData((prev: any) => ({
+          ...prev,
+          envStatus: {
+            ...prev?.envStatus,
+            paypalConfigured: json.paypalStatus.status === 'LIVE',
+            paypalStatus: json.paypalStatus,
+          },
+        }));
       }
     } catch (err: any) {
       setActionMessage({ text: err.message, type: 'error' });
@@ -116,6 +131,9 @@ export default function SettingsPage() {
       if (res.ok) {
         setActionMessage({ text: 'Sample invoices reset successfully.', type: 'success' });
         fetchSettings();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setActionMessage({ text: data.error || 'Demo reset failed', type: 'error' });
       }
     } catch (err: any) {
       setActionMessage({ text: err.message, type: 'error' });
@@ -134,6 +152,9 @@ export default function SettingsPage() {
       });
       if (res.ok) {
         setActionMessage({ text: 'All local records deleted.', type: 'success' });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setActionMessage({ text: data.error || 'Clear all failed', type: 'error' });
       }
     } catch (err: any) {
       setActionMessage({ text: err.message, type: 'error' });
@@ -147,7 +168,7 @@ export default function SettingsPage() {
       const res = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName, defaultCurrency }),
+        body: JSON.stringify({ displayName, defaultCurrency, demoMode }),
       });
       if (res.ok) {
         setActionMessage({ text: 'Workspace preferences updated.', type: 'success' });
@@ -194,57 +215,203 @@ export default function SettingsPage() {
         {/* Integration Status Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* PayPal Card */}
-          <div className="glass-panel-elevated rounded-2xl p-6 border border-white/10 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-white font-bold text-base">
-                <CreditCard className="w-5 h-5 text-blue-400" />
-                <span>PayPal Invoicing API v2</span>
-              </div>
-              <span
-                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
-                  data?.envStatus?.paypalConfigured
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                }`}
-              >
-                {data?.envStatus?.paypalConfigured ? 'CONNECTED' : 'DEMO FALLBACK'}
-              </span>
-            </div>
+          {(() => {
+            const rawStatus = data?.envStatus?.paypalStatus?.status;
+            const effectiveStatus: 'LIVE' | 'MOCKED' | 'NOT_CONFIGURED' | 'FAILED' =
+              rawStatus === 'LIVE'
+                ? 'LIVE'
+                : rawStatus === 'FAILED'
+                ? 'FAILED'
+                : rawStatus === 'MOCKED'
+                ? 'MOCKED'
+                : data?.workspace?.demoMode || demoMode
+                ? 'MOCKED'
+                : 'NOT_CONFIGURED';
 
-            <p className="text-xs text-slate-400">
-              Uses official PayPal REST sandbox endpoints to create drafts, send hosted links, and synchronize payment states.
-            </p>
+            return (
+              <div className="glass-panel-elevated rounded-2xl p-6 border border-white/10 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-white font-bold text-base">
+                    <CreditCard className="w-5 h-5 text-blue-400" />
+                    <span>PayPal Invoicing API v2</span>
+                  </div>
+                  <span
+                    className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-bold tracking-wide uppercase flex items-center gap-1.5 ${
+                      effectiveStatus === 'LIVE'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : effectiveStatus === 'FAILED'
+                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                        : effectiveStatus === 'MOCKED'
+                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                        : 'bg-slate-700/50 text-slate-300 border border-slate-600/40'
+                    }`}
+                  >
+                    {effectiveStatus === 'LIVE' && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        LIVE SANDBOX
+                      </>
+                    )}
+                    {effectiveStatus === 'FAILED' && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                        FAILED (AUTH ERROR)
+                      </>
+                    )}
+                    {effectiveStatus === 'MOCKED' && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                        MOCKED (DEMO)
+                      </>
+                    )}
+                    {effectiveStatus === 'NOT_CONFIGURED' && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                        NOT CONFIGURED
+                      </>
+                    )}
+                  </span>
+                </div>
 
-            <div className="space-y-2 text-xs font-mono bg-midnight-950 p-3 rounded-xl border border-white/5">
-              <div className="flex justify-between text-slate-400">
-                <span>Client ID:</span>
-                <span className="text-slate-200">
-                  {data?.envStatus?.paypalClientIdMasked || 'Not set (using demo fallback)'}
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-400">
-                <span>Endpoint:</span>
-                <span className="text-cyan-400 truncate max-w-[220px]">
-                  {data?.envStatus?.paypalBaseUrl}
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-400">
-                <span>Webhook ID:</span>
-                <span className="text-slate-200">
-                  {data?.envStatus?.paypalWebhookConfigured ? 'Configured' : 'Optional (Sync fallback active)'}
-                </span>
-              </div>
-            </div>
+                <p className="text-xs text-slate-400">
+                  Integrates with PayPal Invoicing API v2 to create official sandbox invoice drafts, generate hosted payment links, and synchronize settlement state.
+                </p>
 
-            <button
-              onClick={handleTestPayPal}
-              disabled={testingPayPal}
-              className="w-full py-2 px-3 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 font-semibold text-xs transition-colors flex items-center justify-center gap-2"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${testingPayPal ? 'animate-spin' : ''}`} />
-              <span>Test PayPal Sandbox Authentication</span>
-            </button>
-          </div>
+                <div className="space-y-2 text-xs font-mono bg-midnight-950 p-3 rounded-xl border border-white/5">
+                  <div className="flex justify-between items-center text-slate-400">
+                    <span>OAuth Status:</span>
+                    <span className="font-semibold flex items-center gap-1.5">
+                      {effectiveStatus === 'LIVE' ? (
+                        <>
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                          <span className="text-emerald-400">Sandbox OAuth Connected</span>
+                        </>
+                      ) : effectiveStatus === 'FAILED' ? (
+                        <>
+                          <span className="w-2 h-2 rounded-full bg-rose-400" />
+                          <span className="text-rose-400">Authentication Failed (401)</span>
+                        </>
+                      ) : effectiveStatus === 'MOCKED' ? (
+                        <>
+                          <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                          <span className="text-indigo-400">Deterministic Mock Active</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="w-2 h-2 rounded-full bg-slate-400" />
+                          <span className="text-slate-400">Credentials Missing in .env</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-slate-400">
+                    <span>Client ID:</span>
+                    <span className="text-slate-200">
+                      {data?.envStatus?.paypalClientIdMasked ||
+                        (effectiveStatus === 'MOCKED'
+                          ? 'Demo mock active (no keys in .env)'
+                          : 'Not set in .env')}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-slate-400">
+                    <span>Base Endpoint:</span>
+                    <span className="text-cyan-400 truncate max-w-[220px]">
+                      {data?.envStatus?.paypalBaseUrl || 'https://api-m.sandbox.paypal.com'}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-slate-400">
+                    <span>Webhook Listener:</span>
+                    <span className="text-slate-200">
+                      {data?.envStatus?.paypalWebhookConfigured
+                        ? 'Configured in .env'
+                        : 'Optional (Polling sync active)'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Diagnostic Message Box */}
+                <div
+                  className={`text-[11px] p-3 rounded-xl border leading-relaxed ${
+                    effectiveStatus === 'LIVE'
+                      ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'
+                      : effectiveStatus === 'FAILED'
+                      ? 'bg-rose-500/10 border-rose-500/25 text-rose-200'
+                      : effectiveStatus === 'MOCKED'
+                      ? 'bg-indigo-500/10 border-indigo-500/25 text-indigo-200'
+                      : 'bg-slate-800/40 border-slate-700/40 text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    {effectiveStatus === 'LIVE' && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    )}
+                    {effectiveStatus === 'FAILED' && (
+                      <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    )}
+                    {effectiveStatus === 'MOCKED' && (
+                      <AlertTriangle className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                    )}
+                    {effectiveStatus === 'NOT_CONFIGURED' && (
+                      <AlertCircle className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                    )}
+                    <div className="space-y-1 w-full">
+                      <div className="font-semibold text-white">
+                        {effectiveStatus === 'LIVE' && 'PayPal Sandbox Live Integration Ready'}
+                        {effectiveStatus === 'FAILED' && 'PayPal Sandbox OAuth Failed (401 invalid_client)'}
+                        {effectiveStatus === 'MOCKED' && 'Deterministic Demo Mock Mode Active'}
+                        {effectiveStatus === 'NOT_CONFIGURED' && 'PayPal Credentials Not Configured'}
+                      </div>
+                      <div>
+                        {effectiveStatus === 'LIVE' &&
+                          'Real PayPal Sandbox OAuth verified. Draft invoices will be created directly on sandbox.paypal.com.'}
+                        {effectiveStatus === 'FAILED' && (
+                          <div className="space-y-2 mt-1">
+                            <p className="text-rose-300 font-medium">
+                              {data?.envStatus?.paypalStatus?.message ||
+                                'PayPal returned 401 invalid_client: Client Authentication failed.'}
+                            </p>
+                            <div className="text-[10px] text-slate-300 bg-rose-950/40 p-2.5 rounded-lg border border-rose-500/20 space-y-1.5">
+                              <p className="font-semibold text-rose-200">Audit &amp; Resolution Checklist:</p>
+                              <ol className="list-decimal list-inside space-y-1 text-slate-300">
+                                <li>
+                                  <strong className="text-white">Sandbox vs Live:</strong> Check that keys were generated from the <span className="text-amber-300 font-mono">Sandbox</span> tab (not Live) on developer.paypal.com.
+                                </li>
+                                <li>
+                                  <strong className="text-white">Same REST App:</strong> Confirm both <span className="font-mono text-cyan-300">PAYPAL_CLIENT_ID</span> and <span className="font-mono text-cyan-300">PAYPAL_CLIENT_SECRET</span> belong to the same app.
+                                </li>
+                                <li>
+                                  <strong className="text-white">Clean Formatting:</strong> Ensure .env values contain no trailing spaces, CRLF linebreaks, or extra quotes.
+                                </li>
+                                <li>
+                                  <strong className="text-white">Restart Server:</strong> Node.js process.env requires a server restart (<code className="text-cyan-300">npm run dev</code>) after .env edits.
+                                </li>
+                              </ol>
+                            </div>
+                          </div>
+                        )}
+                        {effectiveStatus === 'MOCKED' &&
+                          'Using local deterministic mock IDs (INV2-DEMO-...) for complete end-to-end evaluation without calling external PayPal APIs.'}
+                        {effectiveStatus === 'NOT_CONFIGURED' &&
+                          'To enable live PayPal Sandbox calls, add PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET to your .env file and restart the development server.'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleTestPayPal}
+                  disabled={testingPayPal}
+                  className="w-full py-2 px-3 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 font-semibold text-xs transition-colors flex items-center justify-center gap-2"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${testingPayPal ? 'animate-spin' : ''}`} />
+                  <span>Test PayPal Sandbox Authentication</span>
+                </button>
+              </div>
+            );
+          })()}
 
           {/* AI Provider Card */}
           <div className="glass-panel-elevated rounded-2xl p-6 border border-white/10 space-y-4">
@@ -413,6 +580,19 @@ export default function SettingsPage() {
                 <option value="CAD">CAD — Canadian Dollar (CA$)</option>
                 <option value="AUD">AUD — Australian Dollar (A$)</option>
               </select>
+            </div>
+
+            <div className="flex items-center gap-3 pt-1 pb-1">
+              <input
+                type="checkbox"
+                id="demoMode"
+                checked={demoMode}
+                onChange={(e) => setDemoMode(e.target.checked)}
+                className="w-4 h-4 rounded bg-midnight-900 border-white/20 text-cyan-500 focus:ring-cyan-400"
+              />
+              <label htmlFor="demoMode" className="text-xs text-slate-300 cursor-pointer">
+                Deterministic Mock Mode (generates mock drafts when live PayPal keys are absent)
+              </label>
             </div>
 
             <button

@@ -67,6 +67,48 @@ export function calculateSubtotal(items: Array<{ quantity: string; unitAmount: s
   return fromCents(subtotalCents);
 }
 
+export interface ApprovalBlockResult {
+  isBlocked: boolean;
+  reason?: string;
+  discrepancy?: string;
+  statedTotal?: string;
+  calculatedTotal?: string;
+}
+
+/**
+ * Evaluates whether PayPal invoice approval is blocked due to an unresolved arithmetic mismatch.
+ * In TrustFlow AI, approval to draft in PayPal is strictly blocked whenever the line items sum
+ * conflicts with the explicit quoted project fee in the brief.
+ */
+export function isInvoiceApprovalBlocked(params: {
+  statedProjectTotal?: string | null;
+  calculatedSubtotal?: string | null;
+  lineItems?: LineItem[];
+}): ApprovalBlockResult {
+  const { statedProjectTotal, calculatedSubtotal, lineItems } = params;
+  if (!statedProjectTotal || statedProjectTotal.trim() === '') {
+    return { isBlocked: false };
+  }
+
+  const subtotal = calculatedSubtotal ?? (lineItems ? calculateSubtotal(lineItems) : '0.00');
+  const statedCents = toCents(statedProjectTotal);
+  const subtotalCents = toCents(subtotal);
+
+  if (statedCents > 0 && statedCents !== subtotalCents) {
+    const diffCents = Math.abs(subtotalCents - statedCents);
+    const diffStr = fromCents(diffCents);
+    return {
+      isBlocked: true,
+      reason: `Invoice line items total ($${subtotal}) conflicts with quoted project fee ($${statedProjectTotal}). Discrepancy of $${diffStr} must be reconciled before PayPal approval.`,
+      discrepancy: diffStr,
+      statedTotal: statedProjectTotal,
+      calculatedTotal: subtotal,
+    };
+  }
+
+  return { isBlocked: false };
+}
+
 /**
  * Checks whether an evidence quote actually appears verbatim inside the original raw brief.
  * Verifies character offsets against the raw text.

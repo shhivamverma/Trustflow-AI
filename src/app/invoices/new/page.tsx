@@ -15,6 +15,7 @@ import {
   Trash2,
   ArrowRight,
   ShieldCheck,
+  ShieldAlert,
   Search,
   Info,
   ExternalLink,
@@ -27,6 +28,7 @@ import {
   calculateSubtotal,
   verifyLineItemEvidence,
   verifyQuoteInSource,
+  isInvoiceApprovalBlocked,
 } from '@/lib/billing-math';
 
 const SAMPLE_BRIEFS = {
@@ -241,6 +243,14 @@ export default function NewInvoicePage() {
       return;
     }
 
+    if (createPayPalDraft && isApprovalBlocked) {
+      setErrorMsg(
+        approvalCheck.reason ||
+          `Cannot approve and draft to PayPal: Line items total (${currency} ${liveSubtotal}) does not match quoted project fee (${currency} ${statedTotal}). Reconcile the discrepancy or use "Save Draft Locally".`
+      );
+      return;
+    }
+
     setSaving(true);
     setErrorMsg(null);
 
@@ -287,6 +297,11 @@ export default function NewInvoicePage() {
   // Stated total vs Calculated total warning check
   const statedTotal = extractionResult?.statedProjectTotal;
   const isMismatch = statedTotal && statedTotal !== liveSubtotal;
+  const approvalCheck = isInvoiceApprovalBlocked({
+    statedProjectTotal: statedTotal,
+    calculatedSubtotal: liveSubtotal,
+  });
+  const isApprovalBlocked = approvalCheck.isBlocked;
 
   // Active selected evidence item
   const currentEvidence =
@@ -695,16 +710,16 @@ export default function NewInvoicePage() {
               <div className="space-y-2">
                 {/* Mismatch Warning */}
                 {isMismatch && (
-                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-200 text-xs space-y-1">
+                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-200 text-xs space-y-1.5">
                     <div className="flex items-center gap-2 font-bold text-amber-300">
                       <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>Deterministic Billing Discrepancy Detected</span>
+                      <span>Deterministic Billing Discrepancy Detected — PayPal Approval Blocked</span>
                     </div>
                     <p className="text-[11px] leading-relaxed">
                       Invoice line items total <strong className="text-white">{currency} {liveSubtotal}</strong>,
                       but the project agreement explicitly quoted <strong className="text-white">{currency} {statedTotal}</strong>.
-                      Review the <strong className="text-amber-300">{currency} {Math.abs(parseFloat(liveSubtotal) - parseFloat(statedTotal)).toFixed(2)}</strong> difference
-                      before submitting to PayPal.
+                      PayPal draft creation is blocked until the <strong className="text-amber-300">{currency} {Math.abs(parseFloat(liveSubtotal) - parseFloat(statedTotal)).toFixed(2)}</strong> discrepancy is reconciled.
+                      You can still save your work in progress using <strong className="text-slate-200">&ldquo;Save Draft Locally&rdquo;</strong>.
                     </p>
                   </div>
                 )}
@@ -1080,7 +1095,14 @@ export default function NewInvoicePage() {
                   <CurrencyDisplay amount={liveSubtotal} currency={currency} size="xl" className="text-white" />
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
+                  {isApprovalBlocked && (
+                    <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                      <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span>PayPal approval locked: {currency} {approvalCheck.discrepancy} mismatch</span>
+                    </span>
+                  )}
+
                   <button
                     onClick={() => handleSaveAndProceed(false)}
                     disabled={saving || lineItems.length === 0}
@@ -1091,9 +1113,23 @@ export default function NewInvoicePage() {
 
                   <button
                     onClick={() => handleSaveAndProceed(true)}
-                    disabled={saving || lineItems.length === 0}
-                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-500/25 transition-all flex items-center gap-2 disabled:opacity-50"
+                    disabled={saving || lineItems.length === 0 || isApprovalBlocked}
+                    className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-2 ${
+                      isApprovalBlocked
+                        ? 'bg-slate-800 text-slate-400 border border-white/10 cursor-not-allowed opacity-60'
+                        : 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 shadow-cyan-500/25 disabled:opacity-50'
+                    }`}
+                    title={
+                      isApprovalBlocked
+                        ? `PayPal approval blocked: Line items total (${currency} ${liveSubtotal}) conflicts with quoted fee (${currency} ${statedTotal}). Reconcile discrepancy before drafting.`
+                        : 'Approve invoice and create draft in PayPal'
+                    }
                   >
+                    {isApprovalBlocked ? (
+                      <ShieldAlert className="w-4 h-4 text-amber-400" />
+                    ) : (
+                      <ShieldCheck className="w-4 h-4 text-slate-950" />
+                    )}
                     <span>Approve &amp; Draft in PayPal</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>

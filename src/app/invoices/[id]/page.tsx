@@ -13,6 +13,8 @@ import {
   ExternalLink,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
+  ShieldAlert,
   Bell,
   ArrowLeft,
   Copy,
@@ -21,6 +23,7 @@ import {
   History,
   Sparkles,
 } from 'lucide-react';
+import { isInvoiceApprovalBlocked, extractAmountInCents, fromCents } from '@/lib/billing-math';
 
 interface InvoiceData {
   id: string;
@@ -105,19 +108,37 @@ export default function InvoiceDetailPage({
     fetchInvoice();
   }, [id]);
 
+  // Evaluate if PayPal approval is blocked due to an unresolved arithmetic discrepancy
+  const totalEvidence = invoice?.evidence?.find((e) => e.fieldReference === 'statedProjectTotal');
+  const quotedCents = totalEvidence?.sourceQuote ? extractAmountInCents(totalEvidence.sourceQuote) : null;
+  const statedTotal = quotedCents !== null ? fromCents(quotedCents) : null;
+  const approvalBlock = isInvoiceApprovalBlocked({
+    statedProjectTotal: statedTotal,
+    calculatedSubtotal: invoice?.total,
+  });
+  const isApprovalBlocked = approvalBlock.isBlocked;
+
   // Handle URL query action shortcuts (e.g. ?action=reminder or ?action=create_paypal)
   useEffect(() => {
     if (!invoice) return;
     const action = searchParams.get('action');
     if (action === 'reminder' && !reminderDraft) {
       handleGenerateReminder();
-    } else if (action === 'create_paypal' && !invoice.paypalInvoiceId) {
+    } else if (action === 'create_paypal' && !invoice.paypalInvoiceId && !isApprovalBlocked) {
       handleCreatePayPalDraft();
     }
-  }, [invoice, searchParams]);
+  }, [invoice, searchParams, isApprovalBlocked]);
 
   // Create PayPal Draft
   async function handleCreatePayPalDraft() {
+    if (isApprovalBlocked) {
+      setErrorMsg(
+        approvalBlock.reason ||
+          'PayPal draft creation blocked: Invoice total conflicts with quoted fee. Reconcile discrepancy before drafting.'
+      );
+      return;
+    }
+
     setActionLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -168,7 +189,14 @@ export default function InvoiceDetailPage({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Sync failed');
-      setSuccessMsg(data.message || 'Invoice status synchronized with PayPal.');
+      const amountMatches = data.remoteAmount && invoice ? parseFloat(data.remoteAmount) === parseFloat(invoice.total) : false;
+      const currencyMatches = invoice ? data.currency === invoice.currency : false;
+      const statusMatches = invoice ? data.remoteStatus === invoice.localStatus : false;
+
+      const verificationInfo = data.remoteAmount
+        ? ` — Remote PayPal Verified: Status: ${data.remoteStatus}${statusMatches ? ' ✓' : ''}, Total: ${data.currency} ${data.remoteAmount}${amountMatches && currencyMatches ? ' ✓ (Exact Match)' : ''}`
+        : '';
+      setSuccessMsg((data.message || 'Invoice status synchronized with PayPal.') + verificationInfo);
       await fetchInvoice();
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -311,9 +339,22 @@ export default function InvoiceDetailPage({
               <div className="flex items-center gap-3 mb-2">
                 <StatusBadge status={invoice.localStatus} size="lg" />
                 {invoice.paypalInvoiceId && (
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-blue-950/80 text-blue-300 border border-blue-500/30">
-                    {invoice.paypalInvoiceId}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-blue-950/80 text-blue-300 border border-blue-500/30">
+                      {invoice.paypalInvoiceId}
+                    </span>
+                    {invoice.paypalInvoiceId.startsWith('INV2-DEMO-') ? (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                        Demo Mock Fallback
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 shadow-[0_0_10px_rgba(16,185,129,0.2)]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Real PayPal Sandbox Draft
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
@@ -339,19 +380,46 @@ export default function InvoiceDetailPage({
             </div>
           </div>
 
+          {/* Mismatch Warning & Approval Block Banner */}
+          {isApprovalBlocked && (
+            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-200 text-xs flex items-center gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                Deterministic Billing Discrepancy Detected — PayPal draft creation blocked: Invoice line items total ({invoice.currency} {invoice.total}) conflicts with quoted project fee ({invoice.currency} {statedTotal}). Reconcile the discrepancy before creating a PayPal draft.
+              </span>
+            </div>
+          )}
+
           {/* Action Toolbar */}
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-3">
               {/* If no PayPal draft created yet */}
               {!invoice.paypalInvoiceId && isDraft && (
-                <button
-                  onClick={handleCreatePayPalDraft}
-                  disabled={actionLoading}
-                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-xs shadow-md shadow-cyan-500/20 transition-all flex items-center gap-2"
-                >
-                  <CreditCard className="w-4 h-4 stroke-[2.2]" />
-                  <span>Create PayPal Sandbox Draft</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleCreatePayPalDraft}
+                    disabled={actionLoading || isApprovalBlocked}
+                    className={`px-4 py-2.5 rounded-xl font-bold text-xs shadow-md transition-all flex items-center gap-2 ${
+                      isApprovalBlocked
+                        ? 'bg-slate-800 text-slate-400 border border-white/10 cursor-not-allowed opacity-60'
+                        : 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 shadow-cyan-500/20'
+                    }`}
+                    title={isApprovalBlocked ? approvalBlock.reason : 'Create PayPal Sandbox Draft'}
+                  >
+                    {isApprovalBlocked ? (
+                      <ShieldAlert className="w-4 h-4 text-amber-400" />
+                    ) : (
+                      <CreditCard className="w-4 h-4 stroke-[2.2]" />
+                    )}
+                    <span>Create PayPal Sandbox Draft</span>
+                  </button>
+                  {isApprovalBlocked && (
+                    <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 text-amber-400" />
+                      <span>Approval locked ({invoice.currency} {approvalBlock.discrepancy} mismatch)</span>
+                    </span>
+                  )}
+                </div>
               )}
 
               {/* If PayPal draft exists but not yet sent */}
@@ -548,9 +616,19 @@ export default function InvoiceDetailPage({
                       <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-cyan-400 ring-4 ring-midnight-950" />
                       <div className="text-xs font-semibold text-white flex items-center gap-2">
                         <span>{hist.newStatus}</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/10 text-slate-400">
-                          {hist.source}
-                        </span>
+                        {hist.source === 'paypal' ? (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                            PayPal Sandbox API
+                          </span>
+                        ) : hist.source === 'demo-fallback' ? (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            Demo Fallback Mock
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/10 text-slate-400">
+                            {hist.source}
+                          </span>
+                        )}
                       </div>
                       <div className="text-[11px] text-slate-400 mt-0.5">{hist.reason}</div>
                       <div className="text-[10px] font-mono text-slate-500 mt-0.5">

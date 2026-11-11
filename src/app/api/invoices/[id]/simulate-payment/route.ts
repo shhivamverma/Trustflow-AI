@@ -6,6 +6,17 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Production Safety Guard: Strictly block client payment simulation in production environments
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json(
+        {
+          error: 'Payment simulation is disabled in production mode.',
+          code: 'SIMULATION_DISABLED_IN_PRODUCTION',
+        },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const invoice = await prisma.invoice.findUnique({ where: { id } });
 

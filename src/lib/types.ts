@@ -108,6 +108,27 @@ export interface GeminiConnectionStatus {
 }
 
 /* -------------------------------------------------------------------------- */
+/* PayPal Connection & Diagnostics Types                                      */
+/* -------------------------------------------------------------------------- */
+
+export type PayPalStatusCategory =
+  | 'LIVE'
+  | 'MOCKED'
+  | 'NOT_CONFIGURED'
+  | 'FAILED';
+
+export interface PayPalConnectionStatus {
+  status: PayPalStatusCategory;
+  configured: boolean;
+  message: string;
+  clientIdMasked?: string | null;
+  baseUrl: string;
+  webhookConfigured: boolean;
+  testedAt?: string;
+  errorDetails?: string | null;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Invoice Entity & State Types                                               */
 /* -------------------------------------------------------------------------- */
 

@@ -370,9 +370,22 @@ export default function DashboardPage() {
 
                       <td className="py-4 px-4 whitespace-nowrap font-mono text-[11px] text-slate-400">
                         {inv.paypalInvoiceId ? (
-                          <span className="bg-midnight-900 border border-white/10 px-2 py-0.5 rounded text-cyan-300">
-                            {inv.paypalInvoiceId}
-                          </span>
+                          <div className="flex flex-col gap-1 items-start">
+                            <span className="bg-midnight-900 border border-white/10 px-2 py-0.5 rounded text-cyan-300">
+                              {inv.paypalInvoiceId}
+                            </span>
+                            {inv.paypalInvoiceId.startsWith('INV2-DEMO-') ? (
+                              <span className="text-[9px] font-mono font-bold text-indigo-300 bg-indigo-500/20 border border-indigo-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                <span className="w-1 h-1 rounded-full bg-indigo-400" />
+                                Demo Mock
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-mono font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
+                                <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+                                Real Sandbox
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-slate-600">&mdash;</span>
                         )}

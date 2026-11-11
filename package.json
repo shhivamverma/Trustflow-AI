@@ -12,7 +12,10 @@
     "test:watch": "vitest",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:validate:pg": "prisma validate --schema=prisma/schema.postgresql.prisma",
+    "db:generate:pg": "prisma generate --schema=prisma/schema.postgresql.prisma",
+    "db:push:pg": "prisma db push --schema=prisma/schema.postgresql.prisma"
   },
   "dependencies": {
     "@prisma/client": "^6.4.1",
@@ -47,4 +50,3 @@
     "vitest": "^3.0.5"
   }
 }
-

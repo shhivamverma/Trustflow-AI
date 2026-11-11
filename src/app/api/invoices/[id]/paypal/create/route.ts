@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { createPayPalInvoiceDraft, PayPalInvoicePayload } from '@/lib/paypal';
+import { isInvoiceApprovalBlocked, extractAmountInCents, fromCents } from '@/lib/billing-math';
 
 export async function POST(
   req: NextRequest,
@@ -10,11 +11,37 @@ export async function POST(
     const { id } = await params;
     const invoice = await prisma.invoice.findUnique({
       where: { id },
-      include: { lineItems: true },
+      include: { lineItems: true, evidence: true },
     });
 
     if (!invoice) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+    }
+
+    // Safeguard: Block PayPal draft creation if invoice has an unresolved arithmetic mismatch
+    const totalEvidence = invoice.evidence?.find((e) => e.fieldReference === 'statedProjectTotal');
+    if (totalEvidence) {
+      const quotedCents = extractAmountInCents(totalEvidence.sourceQuote);
+      const statedTotal = quotedCents !== null ? fromCents(quotedCents) : null;
+
+      if (statedTotal) {
+        const blockCheck = isInvoiceApprovalBlocked({
+          statedProjectTotal: statedTotal,
+          calculatedSubtotal: invoice.total,
+        });
+
+        if (blockCheck.isBlocked) {
+          return NextResponse.json(
+            {
+              error:
+                blockCheck.reason ||
+                `PayPal draft creation blocked: Invoice total (${invoice.currency} ${invoice.total}) conflicts with quoted project fee (${invoice.currency} ${statedTotal}). Reconcile discrepancy before drafting.`,
+              discrepancy: blockCheck.discrepancy,
+            },
+            { status: 422 }
+          );
+        }
+      }
     }
 
     // Idempotency: if already created on PayPal, return existing record

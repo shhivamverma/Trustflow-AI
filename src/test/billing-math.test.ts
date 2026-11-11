@@ -7,6 +7,7 @@ import {
   runBillingIntelligenceChecks,
   locateTotalInSource,
   verifyTotalEvidence,
+  isInvoiceApprovalBlocked,
 } from '../lib/billing-math';
 import { extractWithDeterministicEngine } from '../lib/ai-adapter';
 
@@ -302,6 +303,99 @@ Total Project Fee: USD 3,400.00`;
         expect(result.verified).toBe(false);
         expect(result.startOffset).toBeNull();
         expect(result.endOffset).toBeNull();
+      });
+    });
+
+    describe('Approval Safeguard: Math Mismatch Blocking Rule ($800 vs $950)', () => {
+      const mismatchBrief = `Consulting Engagement Agreement
+Client: Apex Cloud Services
+Billing Contact: billing@apexcloud.io
+Project Reference: Infrastructure & Payment Modernization
+
+Agreed scope breakdown:
+Frontend user dashboard: $200.00
+Backend microservices integration: $400.00
+PayPal payment flow integration: $200.00
+Cloud infrastructure & automated deployment: $150.00
+
+Note: "Total project fee is USD 800: frontend $200, backend $400 and payment integration $200."
+Payment due upon receipt.`;
+
+      it('blocks PayPal approval when line items sum ($950) conflicts with quoted fee ($800)', () => {
+        const lineItems = [
+          { description: 'Frontend user dashboard', quantity: '1', unitAmount: '200.00', amount: '200.00' },
+          { description: 'Backend microservices integration', quantity: '1', unitAmount: '400.00', amount: '400.00' },
+          { description: 'PayPal payment flow integration', quantity: '1', unitAmount: '200.00', amount: '200.00' },
+          { description: 'Cloud infrastructure', quantity: '1', unitAmount: '150.00', amount: '150.00' },
+        ]; // Total = 950.00, stated is 800.00
+
+        const blockResult = isInvoiceApprovalBlocked({
+          statedProjectTotal: '800.00',
+          lineItems,
+        });
+
+        expect(blockResult.isBlocked).toBe(true);
+        expect(blockResult.discrepancy).toBe('150.00');
+        expect(blockResult.reason).toContain('$950.00');
+        expect(blockResult.reason).toContain('$800.00');
+        expect(blockResult.reason).toContain('$150.00');
+      });
+
+      it('permits PayPal approval when line items sum ($800) matches quoted project fee ($800)', () => {
+        const reconciledLineItems = [
+          { description: 'Frontend user dashboard', quantity: '1', unitAmount: '200.00', amount: '200.00' },
+          { description: 'Backend microservices integration', quantity: '1', unitAmount: '400.00', amount: '400.00' },
+          { description: 'PayPal payment flow integration', quantity: '1', unitAmount: '200.00', amount: '200.00' },
+        ]; // Total = 800.00, stated is 800.00
+
+        const blockResult = isInvoiceApprovalBlocked({
+          statedProjectTotal: '800.00',
+          lineItems: reconciledLineItems,
+        });
+
+        expect(blockResult.isBlocked).toBe(false);
+      });
+
+      it('permits PayPal approval when brief contains no stated overall total', () => {
+        const lineItems = [
+          { description: 'Ad-hoc consulting', quantity: '1', unitAmount: '350.00', amount: '350.00' },
+        ];
+
+        const blockResult = isInvoiceApprovalBlocked({
+          statedProjectTotal: null,
+          lineItems,
+        });
+
+        expect(blockResult.isBlocked).toBe(false);
+      });
+
+      it('verifies that extracting Math Mismatch preset marks approval blocked, and unblocks upon reconciliation', () => {
+        const extraction = extractWithDeterministicEngine(mismatchBrief);
+
+        expect(extraction.statedProjectTotal).toBe('800.00');
+        expect(extraction.calculatedTotal).toBe('950.00');
+
+        // Initial extraction has discrepancy: approval must be blocked!
+        const initialCheck = isInvoiceApprovalBlocked({
+          statedProjectTotal: extraction.statedProjectTotal,
+          calculatedSubtotal: extraction.calculatedTotal,
+        });
+        expect(initialCheck.isBlocked).toBe(true);
+        expect(initialCheck.discrepancy).toBe('150.00');
+
+        // Freelancer reconciles by removing the $150 additional scope item or adjusting fees
+        const reconciledItems = extraction.lineItems.filter(
+          (item) => !item.description.toLowerCase().includes('cloud infrastructure')
+        );
+        const reconciledSubtotal = calculateSubtotal(reconciledItems);
+        expect(reconciledSubtotal).toBe('800.00');
+
+        // Now approval check unblocks!
+        const reconciledCheck = isInvoiceApprovalBlocked({
+          statedProjectTotal: extraction.statedProjectTotal,
+          calculatedSubtotal: reconciledSubtotal,
+        });
+        expect(reconciledCheck.isBlocked).toBe(false);
       });
     });
   });
